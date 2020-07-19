@@ -11,8 +11,8 @@ A header-only library for Constrained Delaunay Triangulation
 
 ## Distiguishing Characteristics
 
-1. Ear-clipping uses a priority queue to choose the ear with the best triangle quality.  This minimizes the number of Delaunay flips that are needed is the 2nd stage.
-2. Delaunay flips are done with an in-place algorithm (since no triangles, edges, or vertices are created or destroyed) in contiguous memory.  This approach gives optimal cache performance.
+1. Ear-clipping uses a priority queue to greedily choose the ear with the best triangle quality.  This minimizes the number of Delaunay flips and generally avoid the worst case on O(n^2).
+2. Both Ear-clipping and Delaunay flips are carried out with in-place algorithms in contiguous memory.  This approach gives optimal cache performance.
 3. Triangulator handles either winding order (CCW or CW) for single contours and always returns triangles in the same winding order.  For nested contours, this is almost true, but Triangulator will adjust interior contours as necessary.
 
 
