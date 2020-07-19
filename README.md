@@ -5,7 +5,7 @@ A header-only library for Constrained Delaunay Triangulation
 
 1. Triangulate a single contour using ear-clipping method and satifsying the [Fast Industrial-Strength Triangulation of Polygons (FIST)](http://www.cosy.sbg.ac.at/~held/projects/triang/triang.html) robustness guarantees.
 2. Triangulate a nested contour by performing nesting & bridging, then calling Triangulator::triangulate1.
-3. Optional Constrained Delaunay Triangulation (CDT) output - accomplished via Delaunay/Lawson flips.
+3. Optional Constrained Delaunay Triangulation (CDT) via Delaunay/Lawson flips.
 4. Optional Mesh Refinement via Chew's 2nd Algorithm.
 
 
