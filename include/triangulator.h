@@ -13,14 +13,22 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+
+
+
+// FOR DEBUGGING, REMOVE LATER
 #include <iostream>
+#include <QImage>
+#include <QPainter>
+#include <QFile>
+#include <QFileInfo>
 
 
 
 
 const double      TRI_EPSILON                = 1e-12;
 const std::size_t TRI_UNDEFINED_INDEX        = std::numeric_limits<std::size_t>::max();
-const std::size_t TRI_SPATIAL_HASH_CUTOFF    = 20;
+const std::size_t TRI_SPATIAL_HASH_CUTOFF    = 25;
 const std::size_t TRI_SPATIAL_HASH_PHASE_OUT = 10;
 
 
@@ -70,12 +78,17 @@ public:    // public API functions
                                std::vector<std::array<std::size_t,3> >& triangles);
 
 
+    int DEBUG__WRITE_IMAGE(const std::vector<Vec2>& contour,
+                           std::vector<std::array<std::size_t,3> >& triangles,
+                           const QString& imageFilePath);
+
+
 
 
 protected:
 
 
-    enum PointInTriangle
+    enum PointInPolygon
     {
         EXTERIOR       = 0,
         NOT_TESTED_YET = 1,
@@ -95,35 +108,39 @@ protected:
         std::size_t nextHash;
         double signedArea;
         double triQuality;
+        PointInPolygon reflex;
         bool operator<(const Ear& other) { return this->hash < other.hash; }
     };
 
 
 //    Delicate priority logic - lower numbers are higher priority
 //
-//                    earArea      Positive Degenerate Negative
-//    intersection                    (0)       (1)       (2)
+//                    earArea      Positive Degen/Non-Ref Degenerate Degen/Reflex Negative
+//    intersection                    (0)        (1)          (2)         (3)        (4)
 //
-//    EXTERIOR        (0)              0         3         8
-//    NOT_TESTED_YET  (1)              1         4         9
-//    BOUNDARY        (2)              2         5        10
-//    INTERIOR        (3)              7         6        11
+//    EXTERIOR        (0)              0          2            4          12         16
+//    NOT_TESTED_YET  (1)              1          3            5          13         17
+//    BOUNDARY        (2)              8          6            7          14         18
+//    INTERIOR        (3)             11         10            9          15         19
 
 
     struct Priority
     {
-        PointInTriangle intersection;
+        PointInPolygon intersection;
         double signedArea;
+        PointInPolygon reflex;
         double triQuality;
-        Priority(const PointInTriangle& pit, const double& sa, const double& tq) : intersection(pit), signedArea(sa), triQuality(tq) {}
+        Priority(const PointInPolygon& pit, const double& sa, const PointInPolygon& r, const double& tq) : intersection(pit), signedArea(sa), reflex(r), triQuality(tq) {}
         bool operator<(const Priority& other) const
         {
-            int thisAreaScore  = (std::abs(this->signedArea) <= TRI_EPSILON ? 1 : (this->signedArea > 0.0 ? 0 : 2));    //0 positive, 1 degen, 2 negative
-            int otherAreaScore = (std::abs(other.signedArea) <= TRI_EPSILON ? 1 : (other.signedArea > 0.0 ? 0 : 2));    //0 positive, 1 degen, 2 negative
-            const std::array<std::array<std::size_t,3>,4> score = {std::array<std::size_t,3>{ 0,  3,  8},
-                                                                   std::array<std::size_t,3>{ 1,  4,  9},
-                                                                   std::array<std::size_t,3>{ 2,  5, 10},
-                                                                   std::array<std::size_t,3>{ 7,  6, 11}};
+            int thisAreaScore  = (std::abs(this->signedArea) <= TRI_EPSILON ? 2 : (this->signedArea > 0.0 ? 0 : 4));    //0 positive, 2 degen, 4 negative
+            int otherAreaScore = (std::abs(other.signedArea) <= TRI_EPSILON ? 2 : (other.signedArea > 0.0 ? 0 : 4));    //0 positive, 2 degen, 4 negative
+            thisAreaScore  += (this->reflex == PointInPolygon::EXTERIOR ? 1 : (this->reflex == PointInPolygon::INTERIOR ? -1 : 0));
+            otherAreaScore += (other.reflex == PointInPolygon::EXTERIOR ? 1 : (other.reflex == PointInPolygon::INTERIOR ? -1 : 0));
+            const std::array<std::array<std::size_t,5>,4> score = {std::array<std::size_t,5>{ 0,   2,  4, 12, 16},
+                                                                   std::array<std::size_t,5>{ 1,   3,  5, 13, 17},
+                                                                   std::array<std::size_t,5>{ 8,   6,  7, 14, 18},
+                                                                   std::array<std::size_t,5>{ 11, 10,  9, 15, 19}};
             const std::size_t thisCompositeScore  = score[int(this->intersection)][thisAreaScore];
             const std::size_t otherCompositeScore = score[int(other.intersection)][otherAreaScore];
             if (thisCompositeScore < otherCompositeScore) return true;
@@ -167,7 +184,6 @@ protected:
         std::pair<TItem,TPriority> pop_front()    // Must not be empty
         {
             auto it = this->order.begin();
-            //if (it == this->order.end()) return;
             const TPriority& priority = it->first;
             const TItem& item = it->second;
             this->order.erase(it);
@@ -203,24 +219,76 @@ protected:    // static functions
     }
 
 
-    static PointInTriangle pointInTriangleTest2D(const Vec2& a, const Vec2& p, const Vec2& q, const Vec2& r)
+    static PointInPolygon PointInTriangleTest2D(const Vec2& a, const Vec2& p, const Vec2& q, const Vec2& r)
     {
-        const double qrTest = (a[0] - r[0]) * (q[1] - r[1]) - (q[0] - r[0]) * (a[1] - r[1]);
-        const double rpTest = (a[0] - p[0]) * (r[1] - p[1]) - (r[0] - p[0]) * (a[1] - p[1]);
-        const double pqTest = (a[0] - q[0]) * (p[1] - q[1]) - (p[0] - q[0]) * (a[1] - q[1]);
-        const bool allNegative = (qrTest < -TRI_EPSILON) && (rpTest < -TRI_EPSILON) && (pqTest < -TRI_EPSILON);
-        const bool allPositive = (qrTest >  TRI_EPSILON) && (rpTest >  TRI_EPSILON) && (pqTest >  TRI_EPSILON);
-        if (allNegative || allPositive) return PointInTriangle::INTERIOR;
-        const bool allNonPositive = (qrTest <  TRI_EPSILON) && (rpTest <  TRI_EPSILON) && (pqTest <  TRI_EPSILON);
-        const bool allNonNegative = (qrTest > -TRI_EPSILON) && (rpTest > -TRI_EPSILON) && (pqTest > -TRI_EPSILON);
-        if (allNonPositive || allNegative) return PointInTriangle::BOUNDARY;
-        return PointInTriangle::EXTERIOR;
+        std::array<double,3> test;
+        test[0] = (a[0] - r[0]) * (q[1] - r[1]) - (q[0] - r[0]) * (a[1] - r[1]);
+        test[1] = (a[0] - p[0]) * (r[1] - p[1]) - (r[0] - p[0]) * (a[1] - p[1]);
+        test[2] = (a[0] - q[0]) * (p[1] - q[1]) - (p[0] - q[0]) * (a[1] - q[1]);
+        std::array<int,3> intTest;
+        intTest[0] = (test[0] > TRI_EPSILON ? 1 : (test[0] < -TRI_EPSILON ? -1 : 0));
+        intTest[1] = (test[1] > TRI_EPSILON ? 1 : (test[1] < -TRI_EPSILON ? -1 : 0));
+        intTest[2] = (test[2] > TRI_EPSILON ? 1 : (test[2] < -TRI_EPSILON ? -1 : 0));
+        int sum  = intTest[0] + intTest[1] + intTest[2];
+        int prod = intTest[0] * intTest[1] * intTest[2];
+        if (abs(sum) == 3) return PointInPolygon::INTERIOR;
+        if (abs(sum) == 2) return PointInPolygon::BOUNDARY;    // On edge
+        if (abs(sum) == 1 && prod == 0) return PointInPolygon::BOUNDARY;    // On vertex
+        return PointInPolygon::EXTERIOR;
     }
 
 
+    // Compute signed area (+ is a good non-reflex vertex, - is a reflex vertex, near-0 is hard to say)
     static double triangleSignedArea(const Vec2& p, const Vec2& q, const Vec2& r)
     {
         return 0.5 * ((p[0] * q[1] - p[1] * q[0]) + (q[0] * r[1] - q[1] * r[0]) + (r[0] * p[1] - r[1] * p[0]));
+    }
+
+
+    // Use winding area to determine is a vertex is a reflex vertex or not
+    static PointInPolygon isReflexVertex(const std::size_t& ear, const std::vector<Ear>& polygon)
+    {
+        int winding = 0;
+        const Vec2& a = polygon[ear].pos;
+        const Vec2& q = polygon[polygon[ear].prevEar].pos;
+        const Vec2& r = polygon[polygon[ear].nextEar].pos;
+        double inwardness = (r[0] - q[0]) * (a[1] - q[1]) - (r[1] - q[1]) * (a[0] - q[0]);
+        if (abs(inwardness) < TRI_EPSILON)
+        {
+            const double u = abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
+            if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return PointInPolygon::BOUNDARY;
+        }
+        if (q[1] <= a[1] && a[1] < r[1] && inwardness > 0.0) winding++;
+        if (r[1] <= a[1] && a[1] < q[1] && inwardness < 0.0) winding--;
+        std::size_t vertex = polygon[ear].nextEar;
+        while (vertex != ear)
+        {
+            const Vec2& q = polygon[vertex].pos;
+            const Vec2& r = polygon[polygon[vertex].nextEar].pos;
+            double inwardness = (r[0] - q[0]) * (a[1] - q[1]) - (r[1] - q[1]) * (a[0] - q[0]);
+            if (abs(inwardness) < TRI_EPSILON)
+            {
+                const double u = abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
+                if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return PointInPolygon::BOUNDARY;
+                if (q[1] <= a[1] && a[1] < r[1] && inwardness > 0.0) winding++;
+                if (r[1] <= a[1] && a[1] < q[1] && inwardness < 0.0) winding--;
+            }
+            vertex = polygon[vertex].nextEar;
+        }
+        return (winding == 0 ? PointInPolygon::EXTERIOR : PointInPolygon::INTERIOR);
+    }
+
+
+    // Test for reflex vertex using area primarily, but if abs(area)<EPS, then use winding order test
+    static PointInPolygon isReflexVertexFast(const std::size_t& ear, const std::vector<Ear>& polygon, double& signedArea)
+    {
+        const Vec2& p = polygon[polygon[ear].prevEar].pos;
+        const Vec2& q = polygon[ear].pos;
+        const Vec2& r = polygon[polygon[ear].nextEar].pos;
+        signedArea = triangleSignedArea(p, q, r);
+        if (abs(signedArea) <= TRI_EPSILON) return isReflexVertex(ear, polygon);
+        if (signedArea > 0.0) return PointInPolygon::EXTERIOR;
+        return PointInPolygon::INTERIOR;
     }
 
 

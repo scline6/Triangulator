@@ -60,22 +60,32 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
             polygon[i].prevEar = windingOrderToHashOrder[(polygon[i].originalIndex + 1) % N];
             polygon[i].nextEar = windingOrderToHashOrder[(polygon[i].originalIndex + N - 1) % N];
         }
-        const Vec2& p = contour[polygon[i].prevEar];
-        const Vec2& q = contour[i];
-        const Vec2& r = contour[polygon[i].nextEar];
-        polygon[i].signedArea = Triangulator::triangleSignedArea(p, q, r);
-        polygon[i].triQuality = Triangulator::triangleRadiusRatio(p, q, r);
+
         polygon[i].prevHash = (i == 0   ? TRI_UNDEFINED_INDEX : i - 1);
         polygon[i].nextHash = (i == N-1 ? TRI_UNDEFINED_INDEX : i + 1);
     }
     windingOrderToHashOrder.clear();    // Not needed anymore
+
+    // Compute area and triangle quality measure
+    for (std::size_t i = 0; i < N; i++)
+    {
+        const Vec2& p = contour[polygon[i].prevEar];
+        const Vec2& q = contour[i];
+        const Vec2& r = contour[polygon[i].nextEar];
+        //polygon[i].signedArea = Triangulator::triangleSignedArea(p, q, r);
+        polygon[i].reflex = Triangulator::isReflexVertexFast(i, polygon, polygon[i].signedArea);
+        polygon[i].triQuality = Triangulator::triangleRadiusRatio(p, q, r);
+    }
 
     // Initialize priority queue with all non-negative area (non-reflex vertices)
     Triangulator::PriorityQueue<Priority, std::size_t> earQueue;
     for (std::size_t i = 0; i < N; i++)
     {
         if (polygon[i].signedArea < -TRI_EPSILON) continue;
-        Triangulator::Priority priority(Triangulator::PointInTriangle::NOT_TESTED_YET, polygon[i].signedArea, polygon[i].triQuality);
+        Triangulator::Priority priority(Triangulator::PointInPolygon::NOT_TESTED_YET,
+                                        polygon[i].signedArea,
+                                        polygon[i].reflex,
+                                        polygon[i].triQuality);
         earQueue.insert(i, priority);
     }
 
@@ -89,7 +99,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         // Pick the ear with best quality from the queue
         const auto earPriorityPair = earQueue.pop_front();
         const std::size_t& ear = earPriorityPair.first;
-        const Triangulator::PointInTriangle& oldIntersection = earPriorityPair.second.intersection;
+        const Triangulator::PointInPolygon& oldIntersection = earPriorityPair.second.intersection;
         const std::size_t prevEar = polygon[ear].prevEar;
         const std::size_t nextEar = polygon[ear].nextEar;
         const Triangulator::Vec2& o = polygon[polygon[prevEar].prevEar].pos;
@@ -103,11 +113,11 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         const std::size_t nextHash = polygon[ear].nextHash;
 
         // Perform intersection tests to determine if the candidate really is an ear
-        Triangulator::PointInTriangle newIntersection = oldIntersection;    // initialize value
-        if (oldIntersection == Triangulator::PointInTriangle::NOT_TESTED_YET)
+        Triangulator::PointInPolygon newIntersection = oldIntersection;    // initialize value
+        if (oldIntersection == Triangulator::PointInPolygon::NOT_TESTED_YET)
         {
             spatialHashingOn = (N - triangles.size() > TRI_SPATIAL_HASH_PHASE_OUT);
-            newIntersection = Triangulator::PointInTriangle::EXTERIOR;
+            newIntersection = Triangulator::PointInPolygon::EXTERIOR;
             std::int32_t hashLower, hashUpper;
             if (spatialHashingOn)
             {
@@ -127,13 +137,13 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
                 // Test if vertex  is in interior, on boundary, or in exterior of the ear
                 if (vertex != prevEar && vertex != nextEar)
                 {
-                    Triangulator::PointInTriangle result = Triangulator::pointInTriangleTest2D(polygon[vertex].pos, p, q, r);
-                    if (result == Triangulator::PointInTriangle::INTERIOR)
+                    Triangulator::PointInPolygon result = Triangulator::PointInTriangleTest2D(polygon[vertex].pos, p, q, r);
+                    if (result == Triangulator::PointInPolygon::INTERIOR)
                     {
                         newIntersection = result;
                         break;
                     }
-                    else if (result == Triangulator::PointInTriangle::BOUNDARY)
+                    else if (result == Triangulator::PointInPolygon::BOUNDARY)
                     {
                         newIntersection = result;
                     }
@@ -153,9 +163,12 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
             }
 
             // Push intersecting and touching cases back into the queue, use them as ears only as a last resort
-            if (newIntersection != Triangulator::PointInTriangle::EXTERIOR)
+            if (newIntersection != Triangulator::PointInPolygon::EXTERIOR)
             {
-                Triangulator::Priority priority(newIntersection, polygon[ear].signedArea, polygon[ear].triQuality);
+                Triangulator::Priority priority(newIntersection,
+                                                polygon[ear].signedArea,
+                                                polygon[ear].reflex,
+                                                polygon[ear].triQuality);
                 earQueue.insert(ear, priority);
                 continue;
             }
@@ -163,11 +176,11 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
 
         // It is an ear, so clip it by updating connectivity in the data structures
         diagnostics.totalTriangleArea += std::abs(polygon[ear].signedArea);
-        if (newIntersection == Triangulator::PointInTriangle::BOUNDARY)
+        if (newIntersection == Triangulator::PointInPolygon::BOUNDARY)
         {
             diagnostics.numTrianglesWithPointOnBoundary++;
         }
-        else if (newIntersection == Triangulator::PointInTriangle::INTERIOR)
+        else if (newIntersection == Triangulator::PointInPolygon::INTERIOR)
         {
             diagnostics.numTrianglesWithPointInside++;
         }
@@ -180,18 +193,26 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         polygon[nextHash].prevHash = prevHash;
         polygon[ear].prevHash = TRI_UNDEFINED_INDEX;
         polygon[ear].nextHash = TRI_UNDEFINED_INDEX;
-        polygon[prevEar].signedArea = Triangulator::triangleSignedArea(o, p, r);
-        polygon[nextEar].signedArea = Triangulator::triangleSignedArea(p, r, s);
+        //polygon[prevEar].signedArea = Triangulator::triangleSignedArea(o, p, r);
+        polygon[prevEar].reflex     = Triangulator::isReflexVertexFast(prevEar, polygon, polygon[prevEar].signedArea);
         polygon[prevEar].triQuality = Triangulator::triangleRadiusRatio(o, p, r);
+        //polygon[nextEar].signedArea = Triangulator::triangleSignedArea(p, r, s);
+        polygon[nextEar].reflex     = Triangulator::isReflexVertexFast(nextEar, polygon, polygon[nextEar].signedArea);
         polygon[nextEar].triQuality = Triangulator::triangleRadiusRatio(p, r, s);
         if (polygon[prevEar].signedArea >= -TRI_EPSILON)
         {
-            Triangulator::Triangulator::Priority priority(PointInTriangle::NOT_TESTED_YET, polygon[prevEar].signedArea, polygon[prevEar].triQuality);
+            Triangulator::Triangulator::Priority priority(PointInPolygon::NOT_TESTED_YET,
+                                                          polygon[prevEar].signedArea,
+                                                          polygon[prevEar].reflex,
+                                                          polygon[prevEar].triQuality);
             earQueue.update(prevEar, priority);
         }
         if (polygon[nextEar].signedArea >= -TRI_EPSILON)
         {
-            Triangulator::Triangulator::Priority priority(PointInTriangle::NOT_TESTED_YET, polygon[nextEar].signedArea, polygon[nextEar].triQuality);
+            Triangulator::Triangulator::Priority priority(PointInPolygon::NOT_TESTED_YET,
+                                                          polygon[nextEar].signedArea,
+                                                          polygon[nextEar].reflex,
+                                                          polygon[nextEar].triQuality);
             earQueue.update(nextEar, priority);
         }
     }
@@ -431,11 +452,68 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
 
 
 
-void performChewRefinement(const std::vector<Vec2>& contour,
+void Triangulator::performChewRefinement(const std::vector<Vec2>& contour,
                            std::vector<std::array<std::size_t,3> >& triangles)
 {
     // IMPLEMENT LATER //
 }
 
 
+
+
+int Triangulator::DEBUG__WRITE_IMAGE(const std::vector<Vec2>& contour,
+                                      std::vector<std::array<std::size_t,3> >& triangles,
+                                      const QString& imageFilePath)
+{
+    // Set some image parameters
+    const int IMAGE_WIDTH      = 1000;
+    const int LINE_WIDTH       = 3;
+    const double GROWTH_FACTOR = 1.01;
+
+    // Compute the bounding box for the polygon and triangulation
+    Triangulator::Vec2 lower = contour[0];
+    Triangulator::Vec2 upper = contour[0];
+    for (std::size_t i = 0; i < contour.size(); i++)
+    {
+        lower[0] = std::min(lower[0], contour[i][0]);
+        lower[1] = std::min(lower[1], contour[i][1]);
+        upper[0] = std::max(upper[0], contour[i][0]);
+        upper[1] = std::max(upper[1], contour[i][1]);
+    }
+    const Triangulator::Vec2 center = {0.5 * (lower[0] + upper[0]), 0.5 * (lower[1] + upper[1])};
+    const double paddedWidth = GROWTH_FACTOR * std::max( upper[0] - lower[0], upper[1] - lower[1] );
+    const double scaleFactor = double(IMAGE_WIDTH) / paddedWidth;
+    const double imageHalfWidth = 0.5 * double(IMAGE_WIDTH);
+
+    // Initialize the image and painter
+    QImage image(IMAGE_WIDTH, IMAGE_WIDTH, QImage::Format::Format_RGB32);
+    image.fill(0);
+    QPainter painter;
+    painter.begin(&image);
+    painter.setBrush( QBrush(Qt::lightGray, Qt::BrushStyle::SolidPattern) );
+    painter.setPen( QPen(Qt::white, LINE_WIDTH, Qt::SolidLine) );
+    std::array<QColor,12> palette = {Qt::red, Qt::green, Qt::blue,
+                                     Qt::cyan, Qt::magenta, Qt::yellow,
+                                     Qt::darkRed, Qt::darkGreen, Qt::darkBlue,
+                                     Qt::darkCyan, Qt::darkMagenta, Qt::darkYellow};
+
+    // Draw triangle edges
+    for (std::size_t i = 0; i < triangles.size(); i++)
+    {
+        const QColor color = palette[i % 12];
+        painter.setBrush( QBrush(color, Qt::BrushStyle::SolidPattern) );
+        QPointF points[3];
+        for (std::size_t j = 0; j < 3; j++)
+        {
+            points[j].setX( imageHalfWidth + scaleFactor * (contour[triangles[i][j]][0] - center[0]) );
+            points[j].setY( imageHalfWidth - scaleFactor * (contour[triangles[i][j]][1] - center[1]) );
+        }
+        painter.drawPolygon(points, 3, Qt::WindingFill);
+    }
+
+    // Finalize painter and save image
+    painter.end();
+    int result = image.save(imageFilePath);
+    return result;
+}
 
