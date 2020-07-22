@@ -12,10 +12,10 @@ A header-only library for Constrained Delaunay Triangulation
 
 ## Distiguishing Characteristics
 
-1. Triangulator uses Hilbert spatial hashing to prune distant vertices from the point-in-triangle tests and accelerates the ear-clipping algorithm to O(n*log(n)) performance.
-2. Triangulator's Ear-clipping algorithm uses a priority queue to greedily select the ear with the best triangle quality.  This minimizes the number of Delaunay flips and generally avoids the worst case of O(n^2) for the CDT portion.
-3. Both Ear-clipping and Delaunay flips are carried out with in-place algorithms in contiguous memory.  This approach gives optimal cache performance.
-4. Triangulator handles either winding order (CCW or CW) for single contours and always returns triangles in winding order that is consistent with the input.  For nested contours, this is almost true, but Triangulator will adjust the winding order of interior contours as necessary.
+1. Triangulator uses Hilbert spatial hashing to prune distant vertices from the point-in-triangle tests.
+2. Triangulator's uses a priority queue to greedily select the ear with the best triangle quality, which reduces the number of Delaunay flip operations.
+3. Both ear-clipping (circular list on vector) and Delaunay flips (quad-edge) are carried out with in-place algorithms in contiguous memory for optimal cache performance.
+4. Triangulator handles either winding order (CCW or CW) for single contours and returns triangles in winding order that is consistent with the input.
 
 
 ## Usage
@@ -26,9 +26,8 @@ A header-only library for Constrained Delaunay Triangulation
 ## Roadmap
 
 1. Test Triangulator::triangulate1 on challenging polygons with touching points, self-intersections, duplicate points, collinear points, etc.
-2. Debug issues with Triangulator::performDelaunayFlips.
-3. Implement and test Triangulator::triangulate, which will handle nester polygon contours.
-4. Implement and test Triangulator::performChewRefinement.
+2. Implement and test Triangulator::triangulate, which will handle nested polygon contours.
+3. Implement and test Triangulator::performChewRefinement.
 
 
 ## Personal Goals

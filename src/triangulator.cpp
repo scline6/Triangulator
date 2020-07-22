@@ -314,7 +314,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
     // Transfer jagged array into flat non-boundary-only array for in-place edge swaps (and better cache-locality too)
     std::vector<Triangulator::Edge> nbEdges;
     nbEdges.reserve(totalEdgeCount);
-    std::vector<std::size_t> nbLookup(allEdges.size());
+    std::vector<std::size_t> nbLookup(allEdges.size()+1);
     for (std::size_t i = 0; i < allEdges.size(); i++)
     {
         nbLookup[i] = nbEdges.size();
@@ -324,6 +324,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
             nbEdges.push_back(allEdges[i][j]);
         }
     }
+    nbLookup.back() = nbEdges.size();
 
     // Figure out the four adjacent edges for each edge and compute the diametral circle of each edge
     for (std::size_t i = 0; i < nbEdges.size(); i++)
@@ -332,16 +333,20 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         std::array<std::size_t,4> v = {edge.vertex[0], edge.adjVertex[1], edge.vertex[1], edge.adjVertex[0]};    //v0, vR, v1, vL
         for (std::size_t j = 0; j < 4; j++)
         {
+            edge.adjEdge[j] = TRI_UNDEFINED_INDEX;
             const std::size_t& va = v[j];
             const std::size_t& vb = v[(j+1)%4];
             const std::size_t vabmin = std::min(va, vb);
             const std::size_t vabmax = std::max(va, vb);
             std::size_t k;
-            for (k = nbLookup[vabmin]; k < nbEdges.size(); k++)
+            for (k = nbLookup[vabmin]; k < nbLookup[vabmin+1]; k++)
             {
-                if (nbEdges[k].vertex[1] == vabmax) break;
+                if (nbEdges[k].vertex[1] == vabmax)
+                {
+                    edge.adjEdge[j] = k;
+                    break;
+                }
             }
-            edge.adjEdge[j] = k;
         }
         const Triangulator::Vec2& a = contour[edge.vertex[0]];
         const Triangulator::Vec2& b = contour[edge.vertex[1]];
@@ -370,9 +375,13 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         const std::size_t v1 = edge.vertex[1];
         const std::size_t vL = edge.adjVertex[0];
         const std::size_t vR = edge.adjVertex[1];
-        const bool needsFlip = (distanceSquared(edge.midPt, contour[vL]) < edge.radSq - TRI_EPSILON) ||
-                               (distanceSquared(edge.midPt, contour[vR]) < edge.radSq - TRI_EPSILON);
-        if (!needsFlip) continue;    // If neither adjacent vertex is inside the edge's diametral circle, then don't flip it
+        Triangulator::Vec2 centerL, centerR;
+        double radSqL, radSqR;
+        Triangulator::triangleCircumcenter(contour[v0], contour[v1], contour[vL], centerL, radSqL);
+        Triangulator::triangleCircumcenter(contour[v0], contour[v1], contour[vR], centerR, radSqR);
+        const bool needsFlip = (distanceSquared(centerL, contour[vR]) < radSqL - TRI_EPSILON) ||
+                               (distanceSquared(centerR, contour[vL]) < radSqR - TRI_EPSILON);
+        if (!needsFlip) continue;    // If neither adjacent vertex the opposite triangle's circumcircle, then it is already good, so skip it
 
         // Perform edge flip
         const std::size_t& t0 = edge.adjTriangle[0];
@@ -389,58 +398,71 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         edge.radSq = distanceSquared(edge.midPt, a);
 
         // Update connectivity in adjacent edges
-        Triangulator::Edge& edge0R = nbEdges[edge.adjEdge[0]];
-        Triangulator::Edge& edgeR1 = nbEdges[edge.adjEdge[1]];
-        Triangulator::Edge& edge1L = nbEdges[edge.adjEdge[2]];
-        Triangulator::Edge& edgeL0 = nbEdges[edge.adjEdge[3]];
-        if (v0 == edge0R.vertex[0])
+        if (edge.adjEdge[0] < nbEdges.size())
         {
-            edge0R.adjTriangle[0] = t0;
-            edge0R.adjVertex[0] = vL;
-            edge0R.adjEdge[2] = edgeIndex;
-            edge0R.adjEdge[3] = edge.adjEdge[3];
+            Triangulator::Edge& edge0R = nbEdges[edge.adjEdge[0]];
+            if (v0 == edge0R.vertex[0])
+            {
+                edge0R.adjTriangle[0] = t0;
+                edge0R.adjVertex[0] = vL;
+                edge0R.adjEdge[2] = edgeIndex;
+                edge0R.adjEdge[3] = edge.adjEdge[3];
+            }
+            else {
+                edge0R.adjTriangle[1] = t0;
+                edge0R.adjVertex[1] = vL;
+                edge0R.adjEdge[0] = edgeIndex;
+                edge0R.adjEdge[1] = edge.adjEdge[3];
+            }
         }
-        else {
-            edge0R.adjTriangle[1] = t0;
-            edge0R.adjVertex[1] = vL;
-            edge0R.adjEdge[0] = edgeIndex;
-            edge0R.adjEdge[1] = edge.adjEdge[3];
-        }
-        if (vR == edgeR1.vertex[0])
+        if (edge.adjEdge[1] < nbEdges.size())
         {
-            edgeR1.adjVertex[0] = vL;
-            edgeR1.adjEdge[2] = edge.adjEdge[2];
-            edgeR1.adjEdge[3] = edgeIndex;
+            Triangulator::Edge& edgeR1 = nbEdges[edge.adjEdge[1]];
+            if (vR == edgeR1.vertex[0])
+            {
+                edgeR1.adjVertex[0] = vL;
+                edgeR1.adjEdge[2] = edge.adjEdge[2];
+                edgeR1.adjEdge[3] = edgeIndex;
+            }
+            else {
+                edgeR1.adjVertex[1] = vL;
+                edgeR1.adjEdge[0] = edge.adjEdge[2];
+                edgeR1.adjEdge[1] = edgeIndex;
+            }
         }
-        else {
-            edgeR1.adjVertex[1] = vL;
-            edgeR1.adjEdge[0] = edge.adjEdge[2];
-            edgeR1.adjEdge[1] = edgeIndex;
-        }
-        if (v1 == edge1L.vertex[0])
+        if (edge.adjEdge[2] < nbEdges.size())
         {
-            edge1L.adjTriangle[0] = t1;
-            edge1L.adjVertex[0] = vR;
-            edge1L.adjEdge[2] = edgeIndex;
-            edge1L.adjEdge[3] = edge.adjEdge[1];
+            Triangulator::Edge& edge1L = nbEdges[edge.adjEdge[2]];
+            if (v1 == edge1L.vertex[0])
+            {
+                edge1L.adjTriangle[0] = t1;
+                edge1L.adjVertex[0] = vR;
+                edge1L.adjEdge[2] = edgeIndex;
+                edge1L.adjEdge[3] = edge.adjEdge[1];
+            }
+            else {
+                edge1L.adjTriangle[1] = t1;
+                edge1L.adjVertex[1] = vR;
+                edge1L.adjEdge[0] = edgeIndex;
+                edge1L.adjEdge[1] = edge.adjEdge[1];
+            }
         }
-        else {
-            edge1L.adjTriangle[1] = t1;
-            edge1L.adjVertex[1] = vR;
-            edge1L.adjEdge[0] = edgeIndex;
-            edge1L.adjEdge[1] = edge.adjEdge[1];
-        }
-        if (vL == edgeL0.vertex[0])
+        if (edge.adjEdge[3] < nbEdges.size())
         {
-            edgeL0.adjVertex[0] = vR;
-            edgeL0.adjEdge[2] = edge.adjEdge[0];
-            edgeL0.adjEdge[3] = edgeIndex;
+            Triangulator::Edge& edgeL0 = nbEdges[edge.adjEdge[3]];
+            if (vL == edgeL0.vertex[0])
+            {
+                edgeL0.adjVertex[0] = vR;
+                edgeL0.adjEdge[2] = edge.adjEdge[0];
+                edgeL0.adjEdge[3] = edgeIndex;
+            }
+            else {
+                edgeL0.adjVertex[1] = vR;
+                edgeL0.adjEdge[0] = edge.adjEdge[0];
+                edgeL0.adjEdge[1] = edgeIndex;
+            }
         }
-        else {
-            edgeL0.adjVertex[1] = vR;
-            edgeL0.adjEdge[0] = edge.adjEdge[0];
-            edgeL0.adjEdge[1] = edgeIndex;
-        }
+
         edge.adjEdge = {edge.adjEdge[1], edge.adjEdge[2], edge.adjEdge[3], edge.adjEdge[0]};
         for (std::size_t i = 0; i < 4; i++)
         {
@@ -453,7 +475,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
 
 
 void Triangulator::performChewRefinement(const std::vector<Vec2>& contour,
-                           std::vector<std::array<std::size_t,3> >& triangles)
+                                         std::vector<std::array<std::size_t,3> >& triangles)
 {
     // IMPLEMENT LATER //
 }
@@ -516,4 +538,32 @@ int Triangulator::DEBUG__WRITE_IMAGE(const std::vector<Vec2>& contour,
     int result = image.save(imageFilePath);
     return result;
 }
+
+
+
+
+std::vector<std::array<std::size_t,2> >
+Triangulator::DEBUG__TEST_DELAUNAY_PROPERTY(const std::vector<Vec2>& contour,
+                                            const std::vector<std::array<std::size_t,3> >& triangles)
+{
+    std::vector<std::array<std::size_t,2> > encroachedList;
+    for (std::size_t i = 0; i < triangles.size(); i++)
+    {
+        const Triangulator::Vec2& p = contour[triangles[i][0]];
+        const Triangulator::Vec2& q = contour[triangles[i][1]];
+        const Triangulator::Vec2& r = contour[triangles[i][2]];
+        Triangulator::Vec2 center;
+        double radSq;
+        Triangulator::triangleCircumcenter(p, q, r, center, radSq);
+        for (std::size_t j = 0; j < contour.size(); j++)
+        {
+            if (j == triangles[i][0] || j == triangles[i][1] || j == triangles[i][2]) continue;
+            const double distSq = distanceSquared(center, contour[j]);
+            if (distSq < radSq) encroachedList.push_back({i, j});
+        }
+    }
+    return encroachedList;
+}
+
+
 

@@ -83,6 +83,11 @@ public:    // public API functions
                            const QString& imageFilePath);
 
 
+    std::vector<std::array<std::size_t,2> >
+    DEBUG__TEST_DELAUNAY_PROPERTY(const std::vector<Vec2>& contour,
+                                  const std::vector<std::array<std::size_t,3> >& triangles);
+
+
 
 
 protected:
@@ -303,6 +308,17 @@ protected:    // static functions
         const double lenRP = sqrt(rp[0] * rp[0] + rp[1] * rp[1]);
         const double prod = lenPQ * lenQR * lenRP;
         return (prod < TRI_EPSILON ? 0.0 : 2.0 * area * area * (lenPQ + lenQR + lenRP) / (prod * prod * prod));
+    }
+
+
+    static void triangleCircumcenter(const Vec2& p, const Vec2& q, const Vec2& r, Vec2& center, double& radSq)
+    {
+        const std::array<double,3> e = {distanceSquared(q, r), distanceSquared(r, p), distanceSquared(p, q)};
+        std::array<double,3> w = {e[0] * (e[1] + e[2] - e[0]), e[1] * (e[2] + e[0] - e[1]), e[2] * (e[0] + e[1] - e[2])};
+        const double denom = w[0] + w[1] + w[2];
+        w[0] /= denom; w[1] /= denom; w[2] /= denom;
+        center = {w[0] * p[0] +  w[1] * q[0] + w[2] * r[0], w[0] * p[1] +  w[1] * q[1] + w[2] * r[1]};
+        radSq = distanceSquared(center, p);
     }
 
 
