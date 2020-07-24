@@ -254,9 +254,107 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
                           const bool& delaunay,
                           const bool& includeDegen)
 {
+/*
+    // Sort vertices of each contour in order from small x to big x
+    std::vector<std::vector<std::size_t> > xOrderVertices(contours.size());
+    for (std::size_t i = 0; i < contours.size(); i++)
+    {
+        xOrderVertices.resize(contours[i].size());
+        for (std::size_t j = 0; j < contours[i].size(); j++)
+        {
+            xOrderVertices[i][j] = j;
+        }
+        auto compare1 = [i](const std::size_t& a, const std::size_t& b)
+        {
+            if (contours[i][a][0] < contours[i][b][0]) return true;
+            if (contours[i][a][0] > contours[i][b][0]) return false;
+            if (contours[i][a][1] < contours[i][b][1]) return true;
+            return false;
+        };
+        std::sort(xOrderVertices[i].begin(), xOrderVertices[i].end(), compare1);
+    }
+
+    // Sort each contour in order by x-value of the leftmost vertex
+    std::vector<std::size_t> xOrderContours(contours.size());
+    for (std::size_t i = 0; i < contours.size(); i++)
+    {
+        xOrderContours[i] = i;
+    }
+    auto compare2 = [](const std::size_t& a, std::size_t& b)
+    {
+        if (contours[a][0][0] < contours[b][0][0]) return true;
+        if (contours[a][0][0] > contours[b][0][0]) return false;
+        if (contours[a][0][1] < contours[b][0][1]) return true;
+        return false;
+    };
+    std::sort(std::next(xOrderContours.begin()), xOrderContours.end(), compare2);
+
+    // Calculate number of vertices in bridged contour
+    if (contours.size() == 0) return;
+    std::size_t numVertices = 2 * contours.size() - 2;
+    for (std::size_t i = 0; i < contours.size(); i++)
+    {
+        numVertices += contours[i].size();
+    }
+
+    // Initialize the bridgedContour with the contour[0], which is the outer polygon
+    std::vector<std::array<std::size_t,2> > bridgedContour;
+    bridgedContour.reserve(numVertices);
+    for (std::size_t i = 0; i < xOrderVertices[0].size(); i++)
+    {
+        bridgedContour.push_back({0, xOrderVertices[i]});
+    }
+
+    for (std::size_t k = 1; k <= contours.size(); k++)
+    {
+        const std::size_t& ii = xOrderContours[k];
+        const std::size_t& jj = xOrderVertices[ii][0];
+        const std::size_t& N  = xOrderVertices[ii].size();
+        const double& xLeftmost = contours[ii][jj][0];
+        const double& yLeftmost = contours[ii][jj][1];
+        std::array<std::size_t,2> bridge = bridgedContour[0];
+        for (std::size_t m = 0; m < bridgedContour.size(); m++)
+        {
+            const std::size_t& i = bridgedContour[m][0];
+            const std::size_t& j = bridgedContour[m][1];
+            const std::size_t& x = contours[i][j][0];
+            const std::size_t& y = contours[i][j][1];
+            if (x > xLeftmost || x == xLeftmost && y > yLeftmost) break;
+            for (std::size_t n = 0; n < 2; n++)
+            {
+                const std::size_t other = (n == 0 ? (j+N-1)%N : (j+1)%N);
+                const std::size_t& xOther = contours[i][other][0];
+                const std::size_t& yOther = contours[i][other][1];
+                if (x > xOther || x == xOther && y > yOther) continue;
+
+
+
+            }
+        }
+    }
+
+
+
+    // Create the doubly-linked circular list using a deque
+    struct Vertex
+    {
+        Vec2 pos;
+        std::size_t prev;
+        std::size_t next;
+    };
+    std::deque<Vertex> bridgedContour;
+    for (std::size_t i = 0; i < contours[0].size(); i++)
+    {
+    }
+
+
+
+
+
     // PERFORM NESTING //
     // this->triangulate1(bridgedContour, diagnostics, delaunay, includeDegen); //
     // PERFORM INDEX MAPPING
+*/
 }
 
 
@@ -326,6 +424,16 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
     }
     nbLookup.back() = nbEdges.size();
 
+    // Pre-compute triangle circumcircles
+    std::vector<Triangulator::Circumcircle> circumcircles(triangles.size());
+    for (std::size_t i = 0; i < triangles.size(); i++)
+    {
+        const std::size_t& v0 = triangles[i][0];
+        const std::size_t& v1 = triangles[i][1];
+        const std::size_t& v2 = triangles[i][2];
+        Triangulator::triangleCircumcircle(contour[v0], contour[v1], contour[v2], circumcircles[i].center, circumcircles[i].radSq);
+    }
+
     // Figure out the four adjacent edges for each edge and compute the diametral circle of each edge
     for (std::size_t i = 0; i < nbEdges.size(); i++)
     {
@@ -350,8 +458,6 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         }
         const Triangulator::Vec2& a = contour[edge.vertex[0]];
         const Triangulator::Vec2& b = contour[edge.vertex[1]];
-        edge.midPt = {0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])};
-        edge.radSq = distanceSquared(edge.midPt, a);
     }
 
     // Initialize priority queue for Delaunay edge flips
@@ -375,29 +481,25 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         const std::size_t v1 = edge.vertex[1];
         const std::size_t vL = edge.adjVertex[0];
         const std::size_t vR = edge.adjVertex[1];
-        Triangulator::Vec2 centerL, centerR;
-        double radSqL, radSqR;
-        Triangulator::triangleCircumcenter(contour[v0], contour[v1], contour[vL], centerL, radSqL);
-        Triangulator::triangleCircumcenter(contour[v0], contour[v1], contour[vR], centerR, radSqR);
-        const bool needsFlip = (distanceSquared(centerL, contour[vR]) < radSqL - TRI_EPSILON) ||
-                               (distanceSquared(centerR, contour[vL]) < radSqR - TRI_EPSILON);
+        const std::size_t& t0 = edge.adjTriangle[0];
+        const std::size_t& t1 = edge.adjTriangle[1];
+        const bool needsFlip = (distanceSquared(circumcircles[t0].center, contour[vR]) < circumcircles[t0].radSq - TRI_EPSILON) ||
+                               (distanceSquared(circumcircles[t1].center, contour[vL]) < circumcircles[t1].radSq - TRI_EPSILON);
         if (!needsFlip) continue;    // If neither adjacent vertex the opposite triangle's circumcircle, then it is already good, so skip it
 
         // Perform edge flip
-        const std::size_t& t0 = edge.adjTriangle[0];
-        const std::size_t& t1 = edge.adjTriangle[1];
         triangles[t0] = {v0, vR, vL};
         triangles[t1] = {v1, vL, vR};
         edge.vertex[0] = vR;
         edge.vertex[1] = vL;
         edge.adjVertex[0] = v0;
         edge.adjVertex[1] = v1;
-        const Vec2& a = contour[edge.vertex[0]];
-        const Vec2& b = contour[edge.vertex[1]];
-        edge.midPt = {0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])};
-        edge.radSq = distanceSquared(edge.midPt, a);
 
-        // Update connectivity in adjacent edges
+        // Update triangle circumcircles
+        Triangulator::triangleCircumcircle(contour[v0], contour[vR], contour[vL], circumcircles[t0].center, circumcircles[t0].radSq);
+        Triangulator::triangleCircumcircle(contour[v0], contour[vL], contour[vR], circumcircles[t1].center, circumcircles[t1].radSq);
+
+        // Update connectivity in adjacent edges (a.k.a. quad-edges)
         if (edge.adjEdge[0] < nbEdges.size())
         {
             Triangulator::Edge& edge0R = nbEdges[edge.adjEdge[0]];
@@ -463,10 +565,17 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
             }
         }
 
+        // Rotate the edges by 1/4 since the edge was swapped
         edge.adjEdge = {edge.adjEdge[1], edge.adjEdge[2], edge.adjEdge[3], edge.adjEdge[0]};
+
+        // Push the quad-edge neighbors into the queue
         for (std::size_t i = 0; i < 4; i++)
         {
-            if (prioritySet.count(edge.adjEdge[i]) > 0) priorityQueue.push_back(edge.adjEdge[i]);
+            if (prioritySet.count(edge.adjEdge[i]) > 0)
+            {
+                priorityQueue.push_back(edge.adjEdge[i]);
+                prioritySet.insert(edge.adjEdge[i]);
+            }
         }
     }
 }
@@ -554,7 +663,7 @@ Triangulator::DEBUG__TEST_DELAUNAY_PROPERTY(const std::vector<Vec2>& contour,
         const Triangulator::Vec2& r = contour[triangles[i][2]];
         Triangulator::Vec2 center;
         double radSq;
-        Triangulator::triangleCircumcenter(p, q, r, center, radSq);
+        Triangulator::triangleCircumcircle(p, q, r, center, radSq);
         for (std::size_t j = 0; j < contour.size(); j++)
         {
             if (j == triangles[i][0] || j == triangles[i][1] || j == triangles[i][2]) continue;

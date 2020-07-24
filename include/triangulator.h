@@ -40,7 +40,10 @@ class Triangulator
 public:    // public API functions
 
 
-    typedef  std::array<double,2>  Vec2;
+    typedef  std::array<double,2>                Vec2;
+
+
+    typedef  std::array<std::array<double,2>,2>  Mat2x2;
 
 
     struct Diagnostics
@@ -99,6 +102,14 @@ protected:
         NOT_TESTED_YET = 1,
         BOUNDARY       = 2,
         INTERIOR       = 3,
+    };
+
+
+    enum EdgeEdgeIntersection
+    {
+        SEPARATE    = 0,
+        TOUCHING    = 1,
+        CRISS_CROSS = 2,
     };
 
 
@@ -206,8 +217,17 @@ protected:
         std::array<std::size_t,2> adjTriangle;
         std::array<std::size_t,2> adjVertex;
         std::array<std::size_t,4> adjEdge;
-        Vec2 midPt;      // Midpoint of edge, which is center of diametral circle
-        double radSq;    // Diametral Circle squared-radius
+        Vec2 cCenterL;
+        Vec2 cCenterR;
+        double cRadSqL;
+        double cRadSqR;
+    };
+
+
+    struct Circumcircle
+    {
+        Vec2 center;
+        double radSq;
     };
 
 
@@ -241,6 +261,28 @@ protected:    // static functions
         if (abs(sum) == 1 && prod == 0) return PointInPolygon::BOUNDARY;    // On vertex
         return PointInPolygon::EXTERIOR;
     }
+
+
+    Vec2 solve2x2(const Mat2x2& A, const Vec2& B, bool& singular, const double& EPS)
+    {
+        const double det = A[0][0] * A[1][1] - A[0][1] * A[1][0];
+        singular = (det < EPS);
+        if (singular) return Vec2();
+        return {(A[1][1] * B[0] - A[0][1] * B[1]) / det, (A[0][0] * B[1] - A[1][0] * B[0]) / det};
+    }
+
+
+    EdgeEdgeIntersection edgeEdgeIntersectionTest2D(const Vec2& a, const Vec2& b, const Vec2& p, const Vec2& q, const double& EPS=1e-12)
+    {
+        Mat2x2 A = {Vec2{b[0]-a[0], p[0]-q[0]}, Vec2{b[1]-a[1], p[1]-q[1]}};
+        Vec2 B = {p[0]-a[0], p[1]-a[1]};
+        bool singular;
+        Vec2 uv = solve2x2(A, B, singular, EPS);
+        if (abs(uv[0]) <= EPS || abs(uv[1]) <= EPS) return EdgeEdgeIntersection::TOUCHING;
+        if (uv[0] < 0.0 || uv[0] > 1.0 || uv[1] < 0.0 || uv[1] > 1.0) return EdgeEdgeIntersection::SEPARATE;
+        return EdgeEdgeIntersection::CRISS_CROSS;
+    }
+
 
 
     // Compute signed area (+ is a good non-reflex vertex, - is a reflex vertex, near-0 is hard to say)
@@ -311,7 +353,7 @@ protected:    // static functions
     }
 
 
-    static void triangleCircumcenter(const Vec2& p, const Vec2& q, const Vec2& r, Vec2& center, double& radSq)
+    static void triangleCircumcircle(const Vec2& p, const Vec2& q, const Vec2& r, Vec2& center, double& radSq)
     {
         const std::array<double,3> e = {distanceSquared(q, r), distanceSquared(r, p), distanceSquared(p, q)};
         std::array<double,3> w = {e[0] * (e[1] + e[2] - e[0]), e[1] * (e[2] + e[0] - e[1]), e[2] * (e[0] + e[1] - e[2])};
