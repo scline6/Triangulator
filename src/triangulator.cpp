@@ -305,7 +305,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
     for (std::size_t i = 0; i < N; i++)
     {
         if (polygon[i].signedArea < -TRI_EPSILON) continue;
-        Triangulator::Priority priority(Triangulator::PointInPolygon::NOT_TESTED_YET,
+        Triangulator::Priority priority(Triangulator::IntersectionResult::NOT_TESTED_YET,
                                         polygon[i].signedArea,
                                         polygon[i].reflex,
                                         polygon[i].triQuality);
@@ -322,7 +322,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         // Pick the ear with best quality from the queue
         const auto earPriorityPair = earQueue.pop_front();
         const std::size_t& ear = earPriorityPair.first;
-        const Triangulator::PointInPolygon& oldIntersection = earPriorityPair.second.intersection;
+        const Triangulator::IntersectionResult& oldIntersection = earPriorityPair.second.intersection;
         const std::size_t prevEar = polygon[ear].prevEar;
         const std::size_t nextEar = polygon[ear].nextEar;
         const Triangulator::Vec2& o = polygon[polygon[prevEar].prevEar].pos;
@@ -336,11 +336,11 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         const std::size_t nextHash = polygon[ear].nextHash;
 
         // Perform intersection tests to determine if the candidate really is an ear
-        Triangulator::PointInPolygon newIntersection = oldIntersection;    // initialize value
-        if (oldIntersection == Triangulator::PointInPolygon::NOT_TESTED_YET)
+        Triangulator::IntersectionResult newIntersection = oldIntersection;    // initialize value
+        if (oldIntersection == Triangulator::IntersectionResult::NOT_TESTED_YET)
         {
             spatialHashingOn = (N - triangles.size() > TRI_SPATIAL_HASH_PHASE_OUT);
-            newIntersection = Triangulator::PointInPolygon::EXTERIOR;
+            newIntersection = Triangulator::IntersectionResult::EXTERIOR;
             std::int32_t hashLower, hashUpper;
             if (spatialHashingOn)
             {
@@ -360,13 +360,13 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
                 // Test if vertex  is in interior, on boundary, or in exterior of the ear
                 if (vertex != prevEar && vertex != nextEar)
                 {
-                    Triangulator::PointInPolygon result = Triangulator::PointInTriangleTest2D(polygon[vertex].pos, p, q, r);
-                    if (result == Triangulator::PointInPolygon::INTERIOR)
+                    Triangulator::IntersectionResult result = Triangulator::hybridIntersectionTest(ear, vertex, polygon, TRI_EPSILON);
+                    if (result == Triangulator::IntersectionResult::INTERIOR || result == Triangulator::IntersectionResult::BOUNDARY_BUT_EDGE_CROSS)
                     {
                         newIntersection = result;
                         break;
                     }
-                    else if (result == Triangulator::PointInPolygon::BOUNDARY)
+                    else if (result == Triangulator::IntersectionResult::BOUNDARY)
                     {
                         newIntersection = result;
                     }
@@ -386,7 +386,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
             }
 
             // Push intersecting and touching cases back into the queue, use them as ears only as a last resort
-            if (newIntersection != Triangulator::PointInPolygon::EXTERIOR)
+            if (newIntersection != Triangulator::IntersectionResult::EXTERIOR)
             {
                 Triangulator::Priority priority(newIntersection,
                                                 polygon[ear].signedArea,
@@ -399,11 +399,11 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
 
         // It is an ear, so clip it by updating connectivity in the data structures
         diagnostics.totalTriangleArea += std::abs(polygon[ear].signedArea);
-        if (newIntersection == Triangulator::PointInPolygon::BOUNDARY)
+        if (newIntersection == Triangulator::IntersectionResult::BOUNDARY)
         {
             diagnostics.numTrianglesWithPointOnBoundary++;
         }
-        else if (newIntersection == Triangulator::PointInPolygon::INTERIOR)
+        else if (newIntersection == Triangulator::IntersectionResult::INTERIOR)
         {
             diagnostics.numTrianglesWithPointInside++;
         }
@@ -422,7 +422,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         polygon[nextEar].triQuality = Triangulator::triangleRadiusRatio(p, r, s);
         if (polygon[prevEar].signedArea >= -TRI_EPSILON)
         {
-            Triangulator::Triangulator::Priority priority(PointInPolygon::NOT_TESTED_YET,
+            Triangulator::Triangulator::Priority priority(IntersectionResult::NOT_TESTED_YET,
                                                           polygon[prevEar].signedArea,
                                                           polygon[prevEar].reflex,
                                                           polygon[prevEar].triQuality);
@@ -430,7 +430,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         }
         if (polygon[nextEar].signedArea >= -TRI_EPSILON)
         {
-            Triangulator::Triangulator::Priority priority(PointInPolygon::NOT_TESTED_YET,
+            Triangulator::Triangulator::Priority priority(IntersectionResult::NOT_TESTED_YET,
                                                           polygon[nextEar].signedArea,
                                                           polygon[nextEar].reflex,
                                                           polygon[nextEar].triQuality);
@@ -556,23 +556,26 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
     }
 
     // I use a novel hole-bridging method.  David Eberly's method is the standard.
+    //
     // Eberly's method:
-    //     1. Look for a polygon edge due left of the hole's leftmost point.
+    //     1. Use a ray intersection to look for a polygon edge due left of the hole's leftmost point.
     //     2. Form a triangle with the edge (sort of) and leftmost point.  Look for other vertices inside.
     //     3. The closest vertex (either inside or on the edge) forms the bridge with the leftmost point.
-    // The problem is Step #1.  It is an O(N) search.  If you build a tree or grid, it is O(log N) or O(1).
+    // The main problem is Step #1.  It is an O(N) search.  If you build a tree or grid, it is O(log N) or O(1).
     // But building the tree or grid is O(N) and there usually are not enough holes to justify it.
     // So if we accept O(N) methods, then there is an alternative simpler approach.
+    // There is a secondary problem as well.  What if two identical edges are on the ray?  Bridging guarantees this.
+    //
     // My method:
     //    1. Look for the closest edge that is wholly or partially to the left of the hole's leftmost point.
     //        a. If the edge is wholly to the left, use point-to-edge distance.
     //        b. If the edge is partially to the left, use point-to-point distance with the left point.
+    //        c. If two edges are identical, make sure the triangle formed by the point and edge is CCW.
     //    2. Once you have the closest edge, find the closer of its two vertices.  Bridge it with the leftmost point.
 
     // Create bridges until the contour graph is one big circular list
     for (std::size_t m = 1; m < leftmost.size(); m++)
     {
-        // Find a the closest edge in the bridgedContour that is to the left of the hole's leftmost point
         double distSqToClosestEdge = std::numeric_limits<double>::max();
         std::array<std::size_t,2> closestEdge;
         const Triangulator::Vec2& a = bridgedContour[leftmost[m]].pos;
@@ -580,7 +583,6 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
         while(vertex != TRI_UNDEFINED_INDEX)
         {
             const Triangulator::Vec2& b = bridgedContour[vertex].pos;
-            //if (pow(a[0] - b[0],2) > distSqToClosestEdge) break;    // Once ax-bx>closest, the points are too far, so stop - Can you do this?
             for (std::size_t n = 0; n < 2; n++)    // Two connected edges on each vertex
             {
                 const std::size_t& neighbor = (n == 0 ? bridgedContour[vertex].prevVertex : bridgedContour[vertex].nextVertex);
@@ -588,7 +590,7 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
                 if ( !Triangulator::lessThan(b, c) ) continue;    // If c is to the right of b, then skip it to avoid computing twice
                 if ( Triangulator::lessThan(a, c))    // If c is to the right of a, then forget edge bc, just compute distance to vertex b
                 {
-                    const double distSq = distanceSquared(a, b);
+                    const double distSq = Triangulator::distanceSquared(a, b);
                     if (distSq < distSqToClosestEdge)
                     {
                         distSqToClosestEdge = distSq;
@@ -596,7 +598,9 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
                     }
                 }
                 else {
-                    const double distSq = pointToEdgeDistanceSquared2D(a, b, c, TRI_EPSILON);
+                    const double signedArea = (n == 0 ? Triangulator::triangleSignedArea(a, c, b) : Triangulator::triangleSignedArea(a, b, c));
+                    if (signedArea < 0.0) continue;    // The triangle winding should match the polygon winding
+                    const double distSq = Triangulator::pointToEdgeDistanceSquared2D(a, b, c, TRI_EPSILON);
                     if (distSq < distSqToClosestEdge)
                     {
                         distSqToClosestEdge = distSq;
@@ -611,8 +615,8 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
         std::size_t unobstructedVertex = closestEdge[0];
         if (closestEdge[1] != TRI_UNDEFINED_INDEX)
         {
-            const double dist0 = distanceSquared(a, bridgedContour[closestEdge[0]].pos);
-            const double dist1 = distanceSquared(a, bridgedContour[closestEdge[1]].pos);
+            const double dist0 = Triangulator::distanceSquared(a, bridgedContour[closestEdge[0]].pos);
+            const double dist1 = Triangulator::distanceSquared(a, bridgedContour[closestEdge[1]].pos);
             if (dist1 < dist0) unobstructedVertex = closestEdge[1];
         }
 

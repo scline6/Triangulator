@@ -26,11 +26,9 @@ A header-only library for Constrained Delaunay Triangulation
 
 ## Roadmap
 
-1. Add tie break for minimum edge.
-2. Add tie break for touching point intersection.
-3. Get rid of class and use a namespace instead.
-4. Test  on challenging polygons with touching points, self-intersections, duplicate points, collinear points, etc.
-5. Build a Tensorflow deep-learning model to perform CDT by training it against Triangulator.  This is the original reason for the project.
-6. Implement and test Triangulator::performChewRefinement.
+1. Get rid of class and use a namespace instead.
+2. Test on challenging polygons with touching points, self-intersections, duplicate points, collinear points, etc.
+3. Build a Tensorflow deep-learning model to perform CDT by training it against Triangulator.  This is the original reason for the project.
+4. Implement and test Triangulator::performChewRefinement.
 
 

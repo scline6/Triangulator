@@ -101,20 +101,13 @@ public:    // public API functions
 protected:
 
 
-    enum PointInPolygon
+    enum IntersectionResult
     {
-        EXTERIOR       = 0,
-        NOT_TESTED_YET = 1,
-        BOUNDARY       = 2,
-        INTERIOR       = 3,
-    };
-
-
-    enum EdgeEdgeIntersection
-    {
-        SEPARATE    = 0,
-        TOUCHING    = 1,
-        CRISS_CROSS = 2,
+        EXTERIOR                = 0,
+        NOT_TESTED_YET          = 1,
+        BOUNDARY                = 2,
+        BOUNDARY_BUT_EDGE_CROSS = 3,
+        INTERIOR                = 4,
     };
 
 
@@ -130,7 +123,7 @@ protected:
         std::size_t nextHash;
         double signedArea;
         double triQuality;
-        PointInPolygon reflex;
+        IntersectionResult reflex;
         bool operator<(const Ear& other) { return this->hash < other.hash; }
     };
 
@@ -160,36 +153,38 @@ protected:
 
 //    Delicate priority logic - lower numbers are higher priority
 //
-//                    earArea      Positive Degen/Non-Ref Degenerate Degen/Reflex Negative
-//    intersection                    (0)        (1)          (2)         (3)        (4)
+//                             earArea      Positive Degen/Non-Ref Degenerate Degen/Reflex Negative
+//    intersection                             (0)        (1)          (2)         (3)        (4)
 //
-//    EXTERIOR        (0)              0          2            4          12         16
-//    NOT_TESTED_YET  (1)              1          3            5          13         17
-//    BOUNDARY        (2)              8          6            7          14         18
-//    INTERIOR        (3)             11         10            9          15         19
+//    EXTERIOR                 (0)              0          2            4          15         20
+//    NOT_TESTED_YET           (1)              1          3            5          16         21
+//    BOUNDARY                 (2)              8          6            7          17         22
+//    BOUNDARY_BUT_EDGE_CROSS  (3)             11         10            9          18         23
+//    INTERIOR                 (4)             14         13           12          19         24
 
 
     struct Priority
     {
-        PointInPolygon intersection;
+        IntersectionResult intersection;
         double signedArea;
-        PointInPolygon reflex;
+        IntersectionResult reflex;
         double triQuality;
-        Priority(const PointInPolygon& pit, const double& sa, const PointInPolygon& r, const double& tq) : intersection(pit), signedArea(sa), reflex(r), triQuality(tq) {}
+        Priority(const IntersectionResult& pit, const double& sa, const IntersectionResult& r, const double& tq) : intersection(pit), signedArea(sa), reflex(r), triQuality(tq) {}
         bool operator<(const Priority& other) const
         {
             int thisAreaScore  = (std::abs(this->signedArea) <= TRI_EPSILON ? 2 : (this->signedArea > 0.0 ? 0 : 4));    //0 positive, 2 degen, 4 negative
             int otherAreaScore = (std::abs(other.signedArea) <= TRI_EPSILON ? 2 : (other.signedArea > 0.0 ? 0 : 4));    //0 positive, 2 degen, 4 negative
-            thisAreaScore  += (this->reflex == PointInPolygon::EXTERIOR ? 1 : (this->reflex == PointInPolygon::INTERIOR ? -1 : 0));
-            otherAreaScore += (other.reflex == PointInPolygon::EXTERIOR ? 1 : (other.reflex == PointInPolygon::INTERIOR ? -1 : 0));
-            const std::array<std::array<std::size_t,5>,4> score = {std::array<std::size_t,5>{ 0,   2,  4, 12, 16},
-                                                                   std::array<std::size_t,5>{ 1,   3,  5, 13, 17},
-                                                                   std::array<std::size_t,5>{ 8,   6,  7, 14, 18},
-                                                                   std::array<std::size_t,5>{ 11, 10,  9, 15, 19}};
+            thisAreaScore  += (this->reflex == IntersectionResult::EXTERIOR ? 1 : (this->reflex == IntersectionResult::INTERIOR ? -1 : 0));
+            otherAreaScore += (other.reflex == IntersectionResult::EXTERIOR ? 1 : (other.reflex == IntersectionResult::INTERIOR ? -1 : 0));
+            const std::array<std::array<std::size_t,5>,5> score = {std::array<std::size_t,5>{  0,  2,  4, 15, 20 },
+                                                                   std::array<std::size_t,5>{  1,  3,  5, 16, 21 },
+                                                                   std::array<std::size_t,5>{  8,  6,  7, 17, 22 },
+                                                                   std::array<std::size_t,5>{ 11, 10,  9, 18, 23 },
+                                                                   std::array<std::size_t,5>{ 14, 13, 12, 19, 24 }};
             const std::size_t thisCompositeScore  = score[int(this->intersection)][thisAreaScore];
             const std::size_t otherCompositeScore = score[int(other.intersection)][otherAreaScore];
             if (thisCompositeScore < otherCompositeScore) return true;
-            if (this->triQuality > other.triQuality) return true;
+            if (this->triQuality > other.triQuality) return true;    // All other things being equal, pick the best triangle quality
             return false;
         }
     };
@@ -273,7 +268,17 @@ protected:    // static functions
     }
 
 
-    static PointInPolygon PointInTriangleTest2D(const Vec2& a, const Vec2& p, const Vec2& q, const Vec2& r)
+    static double pointToEdgeDistanceSquared2D(const Vec2& p, const Vec2& a, const Vec2& b, const double& EPS)
+    {
+        const Vec2 beta = {b[0] - a[0], b[1] - a[1]};
+        const double denom = beta[0] * beta[0] + beta[1] * beta[1];
+        if (abs(denom) <= EPS) return distanceSquared(p, a);    // beta=0 means a=b
+        const double t = ((p[0] - a[0]) * beta[0] + (p[1] - a[1]) * beta[1]) / denom;
+        return distanceSquared(p, {a[0] + beta[0] * t, a[1] + beta[1] * t});
+    }
+
+
+    static IntersectionResult pointInTriangleTest2D(const Vec2& a, const Vec2& p, const Vec2& q, const Vec2& r)
     {
         std::array<double,3> test;
         test[0] = (a[0] - r[0]) * (q[1] - r[1]) - (q[0] - r[0]) * (a[1] - r[1]);
@@ -285,14 +290,14 @@ protected:    // static functions
         intTest[2] = (test[2] > TRI_EPSILON ? 1 : (test[2] < -TRI_EPSILON ? -1 : 0));
         int sum  = intTest[0] + intTest[1] + intTest[2];
         int prod = intTest[0] * intTest[1] * intTest[2];
-        if (abs(sum) == 3) return PointInPolygon::INTERIOR;
-        if (abs(sum) == 2) return PointInPolygon::BOUNDARY;    // On edge
-        if (abs(sum) == 1 && prod == 0) return PointInPolygon::BOUNDARY;    // On vertex
-        return PointInPolygon::EXTERIOR;
+        if (abs(sum) == 3) return IntersectionResult::INTERIOR;
+        if (abs(sum) == 2) return IntersectionResult::BOUNDARY;    // On edge
+        if (abs(sum) == 1 && prod == 0) return IntersectionResult::BOUNDARY;    // On vertex
+        return IntersectionResult::EXTERIOR;
     }
 
 
-    Vec2 solve2x2(const Mat2x2& A, const Vec2& B, bool& singular, const double& EPS)
+    static Vec2 solve2x2(const Mat2x2& A, const Vec2& B, bool& singular, const double& EPS)
     {
         const double det = A[0][0] * A[1][1] - A[0][1] * A[1][0];
         singular = (det < EPS);
@@ -301,25 +306,33 @@ protected:    // static functions
     }
 
 
-    EdgeEdgeIntersection edgeEdgeIntersectionTest2D(const Vec2& a, const Vec2& b, const Vec2& p, const Vec2& q, const double& EPS=1e-12)
+    static IntersectionResult edgeEdgeIntersectionTest2D(const Vec2& a, const Vec2& b, const Vec2& p, const Vec2& q, const double& EPS)
     {
         Mat2x2 A = {Vec2{b[0]-a[0], p[0]-q[0]}, Vec2{b[1]-a[1], p[1]-q[1]}};
         Vec2 B = {p[0]-a[0], p[1]-a[1]};
         bool singular;
         Vec2 uv = solve2x2(A, B, singular, EPS);
-        if (abs(uv[0]) <= EPS || abs(uv[1]) <= EPS) return EdgeEdgeIntersection::TOUCHING;
-        if (uv[0] < 0.0 || uv[0] > 1.0 || uv[1] < 0.0 || uv[1] > 1.0) return EdgeEdgeIntersection::SEPARATE;
-        return EdgeEdgeIntersection::CRISS_CROSS;
+        if (abs(uv[0]) <= EPS || abs(uv[1]) <= EPS) return IntersectionResult::BOUNDARY;
+        if (uv[0] < 0.0 || uv[0] > 1.0 || uv[1] < 0.0 || uv[1] > 1.0) return IntersectionResult::EXTERIOR;
+        return IntersectionResult::INTERIOR;
     }
 
 
-    double pointToEdgeDistanceSquared2D(const Vec2& p, const Vec2& a, const Vec2& b, const double& EPS)
+    static IntersectionResult hybridIntersectionTest(const std::size_t& ear, const std::size_t& vertex, const std::vector<Ear>& polygon, const double& EPS)
     {
-        const Vec2 beta = {b[0] - a[0], b[1] - a[1]};
-        const double denom = beta[0] * beta[0] + beta[1] * beta[1];
-        if (abs(denom) <= EPS) return distanceSquared(p, a);
-        const double t = ((p[0] - a[0]) * beta[0] + (p[1] - a[1]) * beta[1]) / denom;
-        return distanceSquared(p, {a[0] + beta[0] * t, a[1] + beta[1] * t});
+        const Vec2& p = polygon[polygon[ear].prevEar].pos;
+        const Vec2& q = polygon[ear].pos;
+        const Vec2& r = polygon[polygon[ear].nextEar].pos;
+        const Vec2& b = polygon[vertex].pos;
+        const IntersectionResult result = pointInTriangleTest2D(b, p, q, r);
+        if (result != IntersectionResult::BOUNDARY) return result;
+        const Vec2& a = polygon[polygon[vertex].prevEar].pos;
+        const Vec2& c = polygon[polygon[vertex].nextEar].pos;
+        const IntersectionResult e0 = edgeEdgeIntersectionTest2D(p, r, b, a, EPS);
+        if (e0 != IntersectionResult::EXTERIOR) return IntersectionResult::BOUNDARY_BUT_EDGE_CROSS;
+        const IntersectionResult e1 = edgeEdgeIntersectionTest2D(p, r, b, c, EPS);
+        if (e1 != IntersectionResult::EXTERIOR) return IntersectionResult::BOUNDARY_BUT_EDGE_CROSS;
+        return IntersectionResult::BOUNDARY;
     }
 
 
@@ -331,7 +344,7 @@ protected:    // static functions
 
 
     // Use winding area to determine is a vertex is a reflex vertex or not
-    static PointInPolygon isReflexVertex(const std::size_t& ear, const std::vector<Ear>& polygon)
+    static IntersectionResult isReflexVertex(const std::size_t& ear, const std::vector<Ear>& polygon)
     {
         int winding = 0;
         const Vec2& a = polygon[ear].pos;
@@ -341,7 +354,7 @@ protected:    // static functions
         if (abs(inwardness) < TRI_EPSILON)
         {
             const double u = abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
-            if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return PointInPolygon::BOUNDARY;
+            if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return IntersectionResult::BOUNDARY;
         }
         if (q[1] <= a[1] && a[1] < r[1] && inwardness > 0.0) winding++;
         if (r[1] <= a[1] && a[1] < q[1] && inwardness < 0.0) winding--;
@@ -354,26 +367,26 @@ protected:    // static functions
             if (abs(inwardness) < TRI_EPSILON)
             {
                 const double u = abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
-                if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return PointInPolygon::BOUNDARY;
+                if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return IntersectionResult::BOUNDARY;
                 if (q[1] <= a[1] && a[1] < r[1] && inwardness > 0.0) winding++;
                 if (r[1] <= a[1] && a[1] < q[1] && inwardness < 0.0) winding--;
             }
             vertex = polygon[vertex].nextEar;
         }
-        return (winding == 0 ? PointInPolygon::EXTERIOR : PointInPolygon::INTERIOR);
+        return (winding == 0 ? IntersectionResult::EXTERIOR : IntersectionResult::INTERIOR);
     }
 
 
     // Test for reflex vertex using area primarily, but if abs(area)<EPS, then use winding order test
-    static PointInPolygon isReflexVertexFast(const std::size_t& ear, const std::vector<Ear>& polygon, double& signedArea)
+    static IntersectionResult isReflexVertexFast(const std::size_t& ear, const std::vector<Ear>& polygon, double& signedArea)
     {
         const Vec2& p = polygon[polygon[ear].prevEar].pos;
         const Vec2& q = polygon[ear].pos;
         const Vec2& r = polygon[polygon[ear].nextEar].pos;
         signedArea = triangleSignedArea(p, q, r);
         if (abs(signedArea) <= TRI_EPSILON) return isReflexVertex(ear, polygon);
-        if (signedArea > 0.0) return PointInPolygon::EXTERIOR;
-        return PointInPolygon::INTERIOR;
+        if (signedArea > 0.0) return IntersectionResult::EXTERIOR;
+        return IntersectionResult::INTERIOR;
     }
 
 
