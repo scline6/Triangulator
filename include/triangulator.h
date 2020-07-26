@@ -40,7 +40,7 @@ class Triangulator
 public:    // public API functions
 
 
-    typedef  std::array<double,2>                Vec2;
+    typedef  std::array<double,2>  Vec2;
 
 
     typedef  std::array<std::array<double,2>,2>  Mat2x2;
@@ -66,7 +66,7 @@ public:    // public API functions
                  const bool& includeDegen = true);
 
 
-    std::vector<std::array<std::size_t,3> >
+    std::vector<std::array<std::array<std::size_t,2>,3> >
     triangulate(const std::vector<std::vector<Vec2> >& contours,
                 Diagnostics& diagnostics,
                 const bool& delaunay = true,
@@ -83,6 +83,11 @@ public:    // public API functions
 
     int DEBUG__WRITE_IMAGE(const std::vector<Vec2>& contour,
                            std::vector<std::array<std::size_t,3> >& triangles,
+                           const QString& imageFilePath);
+
+
+    int DEBUG__WRITE_IMAGE(const std::vector<std::vector<Vec2> >& contours,
+                           std::vector<std::array<std::array<std::size_t,2>,3> >& triangles,
                            const QString& imageFilePath);
 
 
@@ -113,6 +118,7 @@ protected:
     };
 
 
+    // Ear struct is used in circular list for ear-clipping
     struct Ear
     {
         Vec2 pos;
@@ -126,6 +132,29 @@ protected:
         double triQuality;
         PointInPolygon reflex;
         bool operator<(const Ear& other) { return this->hash < other.hash; }
+    };
+
+
+    static bool lessThan(const Vec2& a, const Vec2& b)
+    {
+        if (a[0] < b[0]) return true;
+        if (a[0] > b[0]) return false;
+        if (a[1] < b[1]) return true;    // Decide tie-break with y-coordinate
+        return false;
+    }
+
+
+    // Similar to Ear struct, but used only for bridging holes
+    struct Vertex
+    {
+        Vec2 pos;
+        std::size_t contourIndex;
+        std::size_t vertexIndex;
+        std::size_t prevVertex;
+        std::size_t nextVertex;
+        std::size_t prevX;
+        std::size_t nextX;
+        bool operator<(const Vertex& other) { return lessThan(this->pos, other.pos); }
     };
 
 
@@ -283,6 +312,15 @@ protected:    // static functions
         return EdgeEdgeIntersection::CRISS_CROSS;
     }
 
+
+    double pointToEdgeDistanceSquared2D(const Vec2& p, const Vec2& a, const Vec2& b, const double& EPS)
+    {
+        const Vec2 beta = {b[0] - a[0], b[1] - a[1]};
+        const double denom = beta[0] * beta[0] + beta[1] * beta[1];
+        if (abs(denom) <= EPS) return distanceSquared(p, a);
+        const double t = ((p[0] - a[0]) * beta[0] + (p[1] - a[1]) * beta[1]) / denom;
+        return distanceSquared(p, {a[0] + beta[0] * t, a[1] + beta[1] * t});
+    }
 
 
     // Compute signed area (+ is a good non-reflex vertex, - is a reflex vertex, near-0 is hard to say)
