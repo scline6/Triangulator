@@ -3,11 +3,16 @@
 
 
 
-void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& contour,
+using namespace Triangulator;
+
+
+
+
+void Triangulator::performDelaunayFlips(const std::vector<Vec2>& contour,
                                         std::vector<std::array<std::size_t,3> >& triangles)
 {
     // Make a jagged array of all edges with adjacent triangle, vertex, and edge information
-    std::vector<std::vector<Triangulator::Edge> > allEdges(contour.size());
+    std::vector<std::vector<Edge> > allEdges(contour.size());
     std::size_t totalEdgeCount = 0;
     for (std::size_t i = 0; i < triangles.size(); i++)
     {
@@ -53,7 +58,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
     }
 
     // Transfer jagged array into flat non-boundary-only array for in-place edge swaps (and better cache-locality too)
-    std::vector<Triangulator::Edge> nbEdges;
+    std::vector<Edge> nbEdges;
     nbEdges.reserve(totalEdgeCount);
     std::vector<std::size_t> nbLookup(allEdges.size()+1);
     for (std::size_t i = 0; i < allEdges.size(); i++)
@@ -68,19 +73,19 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
     nbLookup.back() = nbEdges.size();
 
     // Pre-compute triangle circumcircles
-    std::vector<Triangulator::Circumcircle> circumcircles(triangles.size());
+    std::vector<Circumcircle> circumcircles(triangles.size());
     for (std::size_t i = 0; i < triangles.size(); i++)
     {
         const std::size_t& v0 = triangles[i][0];
         const std::size_t& v1 = triangles[i][1];
         const std::size_t& v2 = triangles[i][2];
-        Triangulator::triangleCircumcircle(contour[v0], contour[v1], contour[v2], circumcircles[i].center, circumcircles[i].radSq);
+        circumcircles[i] = triangleCircumcircle(contour[v0], contour[v1], contour[v2]);
     }
 
     // Figure out the four adjacent edges for each edge and compute the diametral circle of each edge
     for (std::size_t i = 0; i < nbEdges.size(); i++)
     {
-        Triangulator::Edge& edge = nbEdges[i];
+        Edge& edge = nbEdges[i];
         std::array<std::size_t,4> v = {edge.vertex[0], edge.adjVertex[1], edge.vertex[1], edge.adjVertex[0]};    //v0, vR, v1, vL
         for (std::size_t j = 0; j < 4; j++)
         {
@@ -99,8 +104,8 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
                 }
             }
         }
-        const Triangulator::Vec2& a = contour[edge.vertex[0]];
-        const Triangulator::Vec2& b = contour[edge.vertex[1]];
+        const Vec2& a = contour[edge.vertex[0]];
+        const Vec2& b = contour[edge.vertex[1]];
     }
 
     // Initialize priority queue for Delaunay edge flips
@@ -119,7 +124,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         const std::size_t edgeIndex = priorityQueue.front();
         priorityQueue.pop_front();
         prioritySet.erase(edgeIndex);
-        Triangulator::Edge& edge = nbEdges[edgeIndex];
+        Edge& edge = nbEdges[edgeIndex];
         const std::size_t v0 = edge.vertex[0];
         const std::size_t v1 = edge.vertex[1];
         const std::size_t vL = edge.adjVertex[0];
@@ -139,13 +144,13 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         edge.adjVertex[1] = v1;
 
         // Update triangle circumcircles
-        Triangulator::triangleCircumcircle(contour[v0], contour[vR], contour[vL], circumcircles[t0].center, circumcircles[t0].radSq);
-        Triangulator::triangleCircumcircle(contour[v0], contour[vL], contour[vR], circumcircles[t1].center, circumcircles[t1].radSq);
+        circumcircles[t0] = triangleCircumcircle(contour[v0], contour[vR], contour[vL]);
+        circumcircles[t1] = triangleCircumcircle(contour[v0], contour[vL], contour[vR]);
 
         // Update connectivity in adjacent edges (a.k.a. quad-edges)
         if (edge.adjEdge[0] < nbEdges.size())
         {
-            Triangulator::Edge& edge0R = nbEdges[edge.adjEdge[0]];
+            Edge& edge0R = nbEdges[edge.adjEdge[0]];
             if (v0 == edge0R.vertex[0])
             {
                 edge0R.adjTriangle[0] = t0;
@@ -162,7 +167,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         }
         if (edge.adjEdge[1] < nbEdges.size())
         {
-            Triangulator::Edge& edgeR1 = nbEdges[edge.adjEdge[1]];
+            Edge& edgeR1 = nbEdges[edge.adjEdge[1]];
             if (vR == edgeR1.vertex[0])
             {
                 edgeR1.adjVertex[0] = vL;
@@ -177,7 +182,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         }
         if (edge.adjEdge[2] < nbEdges.size())
         {
-            Triangulator::Edge& edge1L = nbEdges[edge.adjEdge[2]];
+            Edge& edge1L = nbEdges[edge.adjEdge[2]];
             if (v1 == edge1L.vertex[0])
             {
                 edge1L.adjTriangle[0] = t1;
@@ -194,7 +199,7 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
         }
         if (edge.adjEdge[3] < nbEdges.size())
         {
-            Triangulator::Edge& edgeL0 = nbEdges[edge.adjEdge[3]];
+            Edge& edgeL0 = nbEdges[edge.adjEdge[3]];
             if (vL == edgeL0.vertex[0])
             {
                 edgeL0.adjVertex[0] = vR;
@@ -227,23 +232,24 @@ void Triangulator::performDelaunayFlips(const std::vector<Triangulator::Vec2>& c
 
 
 std::vector<std::array<std::size_t,3> >
-Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
-                           Triangulator::Diagnostics& diagnostics,
+Triangulator::triangulate1(const std::vector<Vec2>& contour,
+                           Diagnostics& diagnostics,
                            const bool& delaunay,
                            const bool& includeDegen)
 {
     // Compute polygon area (which flags CW vs CCW) and the bounding box (which is for the spatial hashing)
-    const Triangulator::Vec2& first = contour.front();
-    const Triangulator::Vec2& last  = contour.back();
-    const bool lastIsFirst = (std::abs(first[0] - last[0]) <= TRI_EPSILON && std::abs(first[1] - last[1]) <= TRI_EPSILON);
+    const Vec2& first = contour.front();
+    const Vec2& last  = contour.back();
+    const bool lastIsFirst = (std::abs(first[0] - last[0]) <= TRI_EPSILON &&
+                              std::abs(first[1] - last[1]) <= TRI_EPSILON);
     const std::size_t N = lastIsFirst ? contour.size()-1 : contour.size();
     diagnostics.polygonArea = 0.0;
-    Triangulator::Vec2 lowerCorner = contour[0];
-    Triangulator::Vec2 upperCorner = lowerCorner;
+    Vec2 lowerCorner = contour[0];
+    Vec2 upperCorner = lowerCorner;
     for (std::size_t i = 0; i < N; i++)
     {
-        const Triangulator::Vec2& q = contour[i];
-        const Triangulator::Vec2& r = contour[(i + 1) % N];
+        const Vec2& q = contour[i];
+        const Vec2& r = contour[(i + 1) % N];
         diagnostics.polygonArea += (q[0] * r[1] - q[1] * r[0]);
         lowerCorner[0] = std::min(lowerCorner[0], q[0]);
         lowerCorner[1] = std::min(lowerCorner[1], q[1]);
@@ -259,12 +265,12 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
 
     // Initialize the dynamic polygon as a doubly-linked list sorted in hash-order (good for spatial hashing and cache efficiency)
     bool spatialHashingOn = (N > TRI_SPATIAL_HASH_CUTOFF);
-    std::vector<Triangulator::Ear> polygon(N);
+    std::vector<Ear> polygon(N);
     for (std::size_t i = 0; i < N; i++)
     {
         polygon[i].pos = contour[i];
         polygon[i].originalIndex = i;
-        polygon[i].hash = spatialHashingOn ? Triangulator::hilbertHashReal(polygon[i].pos, lowerCorner, inverseTotalWidth) : i;
+        polygon[i].hash = spatialHashingOn ? hilbertHashReal(polygon[i].pos, lowerCorner, inverseTotalWidth) : i;
     }
     if (spatialHashingOn) std::sort(polygon.begin(), polygon.end());
     std::vector<std::size_t> windingOrderToHashOrder(N);
@@ -295,17 +301,17 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         const Vec2& p = contour[polygon[i].prevEar];
         const Vec2& q = contour[i];
         const Vec2& r = contour[polygon[i].nextEar];
-        //polygon[i].signedArea = Triangulator::triangleSignedArea(p, q, r);
-        polygon[i].reflex = Triangulator::isReflexVertexFast(i, polygon, polygon[i].signedArea);
-        polygon[i].triQuality = Triangulator::triangleRadiusRatio(p, q, r);
+        //polygon[i].signedArea = triangleSignedArea(p, q, r);
+        polygon[i].reflex = isReflexVertexHybrid(i, polygon, polygon[i].signedArea, TRI_EPSILON);
+        polygon[i].triQuality = triangleRadiusRatio(p, q, r, TRI_EPSILON);
     }
 
     // Initialize priority queue with all non-negative area (non-reflex vertices)
-    Triangulator::PriorityQueue<Priority, std::size_t> earQueue;
+    PriorityQueue<Priority, std::size_t> earQueue;
     for (std::size_t i = 0; i < N; i++)
     {
         if (polygon[i].signedArea < -TRI_EPSILON) continue;
-        Triangulator::Priority priority(Triangulator::IntersectionResult::NOT_TESTED_YET,
+        Priority priority(IntersectionResult::NOT_TESTED_YET,
                                         polygon[i].signedArea,
                                         polygon[i].reflex,
                                         polygon[i].triQuality);
@@ -322,32 +328,32 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         // Pick the ear with best quality from the queue
         const auto earPriorityPair = earQueue.pop_front();
         const std::size_t& ear = earPriorityPair.first;
-        const Triangulator::IntersectionResult& oldIntersection = earPriorityPair.second.intersection;
+        const IntersectionResult& oldIntersection = earPriorityPair.second.intersection;
         const std::size_t prevEar = polygon[ear].prevEar;
         const std::size_t nextEar = polygon[ear].nextEar;
-        const Triangulator::Vec2& o = polygon[polygon[prevEar].prevEar].pos;
-        const Triangulator::Vec2& p = polygon[prevEar].pos;
-        const Triangulator::Vec2& q = polygon[ear].pos;
-        const Triangulator::Vec2& r = polygon[nextEar].pos;
-        const Triangulator::Vec2& s = polygon[polygon[nextEar].nextEar].pos;
+        const Vec2& o = polygon[polygon[prevEar].prevEar].pos;
+        const Vec2& p = polygon[prevEar].pos;
+        const Vec2& q = polygon[ear].pos;
+        const Vec2& r = polygon[nextEar].pos;
+        const Vec2& s = polygon[polygon[nextEar].nextEar].pos;
         const double& A = polygon[ear].signedArea;
         const double& Q = polygon[ear].triQuality;
         const std::size_t prevHash = polygon[ear].prevHash;
         const std::size_t nextHash = polygon[ear].nextHash;
 
         // Perform intersection tests to determine if the candidate really is an ear
-        Triangulator::IntersectionResult newIntersection = oldIntersection;    // initialize value
-        if (oldIntersection == Triangulator::IntersectionResult::NOT_TESTED_YET)
+        IntersectionResult newIntersection = oldIntersection;    // initialize value
+        if (oldIntersection == IntersectionResult::NOT_TESTED_YET)
         {
             spatialHashingOn = (N - triangles.size() > TRI_SPATIAL_HASH_PHASE_OUT);
-            newIntersection = Triangulator::IntersectionResult::EXTERIOR;
+            newIntersection = IntersectionResult::EXTERIOR;
             std::int32_t hashLower, hashUpper;
             if (spatialHashingOn)
             {
                 const Vec2 lower = {std::min(std::min(p[0], q[0]), r[0]), std::min(std::min(p[1], q[1]), r[1])};
                 const Vec2 upper = {std::max(std::max(p[0], q[0]), r[0]), std::max(std::max(p[1], q[1]), r[1])};
-                hashLower = Triangulator::hilbertHashReal(lower, lowerCorner, inverseTotalWidth);
-                hashUpper = Triangulator::hilbertHashReal(upper, lowerCorner, inverseTotalWidth);
+                hashLower = hilbertHashReal(lower, lowerCorner, inverseTotalWidth);
+                hashUpper = hilbertHashReal(upper, lowerCorner, inverseTotalWidth);
             }
             else {
                 hashLower = std::numeric_limits<std::int32_t>::min();
@@ -360,13 +366,13 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
                 // Test if vertex  is in interior, on boundary, or in exterior of the ear
                 if (vertex != prevEar && vertex != nextEar)
                 {
-                    Triangulator::IntersectionResult result = Triangulator::hybridIntersectionTest(ear, vertex, polygon, TRI_EPSILON);
-                    if (result == Triangulator::IntersectionResult::INTERIOR || result == Triangulator::IntersectionResult::BOUNDARY_BUT_EDGE_CROSS)
+                    IntersectionResult result = hybridIntersectionTest(ear, vertex, polygon, TRI_EPSILON);
+                    if (result == IntersectionResult::INTERIOR || result == IntersectionResult::BOUNDARY_BUT_EDGE_CROSS)
                     {
                         newIntersection = result;
                         break;
                     }
-                    else if (result == Triangulator::IntersectionResult::BOUNDARY)
+                    else if (result == IntersectionResult::BOUNDARY)
                     {
                         newIntersection = result;
                     }
@@ -386,9 +392,9 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
             }
 
             // Push intersecting and touching cases back into the queue, use them as ears only as a last resort
-            if (newIntersection != Triangulator::IntersectionResult::EXTERIOR)
+            if (newIntersection != IntersectionResult::EXTERIOR)
             {
-                Triangulator::Priority priority(newIntersection,
+                Priority priority(newIntersection,
                                                 polygon[ear].signedArea,
                                                 polygon[ear].reflex,
                                                 polygon[ear].triQuality);
@@ -399,11 +405,11 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
 
         // It is an ear, so clip it by updating connectivity in the data structures
         diagnostics.totalTriangleArea += std::abs(polygon[ear].signedArea);
-        if (newIntersection == Triangulator::IntersectionResult::BOUNDARY)
+        if (newIntersection == IntersectionResult::BOUNDARY)
         {
             diagnostics.numTrianglesWithPointOnBoundary++;
         }
-        else if (newIntersection == Triangulator::IntersectionResult::INTERIOR)
+        else if (newIntersection == IntersectionResult::INTERIOR)
         {
             diagnostics.numTrianglesWithPointInside++;
         }
@@ -416,30 +422,30 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
         if (nextHash != TRI_UNDEFINED_INDEX) polygon[nextHash].prevHash = prevHash;
         polygon[ear].prevHash = TRI_UNDEFINED_INDEX;
         polygon[ear].nextHash = TRI_UNDEFINED_INDEX;
-        polygon[prevEar].reflex     = Triangulator::isReflexVertexFast(prevEar, polygon, polygon[prevEar].signedArea);
-        polygon[prevEar].triQuality = Triangulator::triangleRadiusRatio(o, p, r);
-        polygon[nextEar].reflex     = Triangulator::isReflexVertexFast(nextEar, polygon, polygon[nextEar].signedArea);
-        polygon[nextEar].triQuality = Triangulator::triangleRadiusRatio(p, r, s);
+        polygon[prevEar].reflex     = isReflexVertexHybrid(prevEar, polygon, polygon[prevEar].signedArea, TRI_EPSILON);
+        polygon[prevEar].triQuality = triangleRadiusRatio(o, p, r, TRI_EPSILON);
+        polygon[nextEar].reflex     = isReflexVertexHybrid(nextEar, polygon, polygon[nextEar].signedArea, TRI_EPSILON);
+        polygon[nextEar].triQuality = triangleRadiusRatio(p, r, s, TRI_EPSILON);
         if (polygon[prevEar].signedArea >= -TRI_EPSILON)
         {
-            Triangulator::Triangulator::Priority priority(IntersectionResult::NOT_TESTED_YET,
-                                                          polygon[prevEar].signedArea,
-                                                          polygon[prevEar].reflex,
-                                                          polygon[prevEar].triQuality);
+            Priority priority(IntersectionResult::NOT_TESTED_YET,
+                                            polygon[prevEar].signedArea,
+                                            polygon[prevEar].reflex,
+                                            polygon[prevEar].triQuality);
             earQueue.update(prevEar, priority);
         }
         if (polygon[nextEar].signedArea >= -TRI_EPSILON)
         {
-            Triangulator::Triangulator::Priority priority(IntersectionResult::NOT_TESTED_YET,
-                                                          polygon[nextEar].signedArea,
-                                                          polygon[nextEar].reflex,
-                                                          polygon[nextEar].triQuality);
+            Priority priority(IntersectionResult::NOT_TESTED_YET,
+                                            polygon[nextEar].signedArea,
+                                            polygon[nextEar].reflex,
+                                            polygon[nextEar].triQuality);
             earQueue.update(nextEar, priority);
         }
     }
 
     // If delaunay option is on, then perform Delaunay flips until constrained Delaunay triangulation (CDT) is achieved
-    if (delaunay) this->performDelaunayFlips(contour, triangles);
+    if (delaunay) performDelaunayFlips(contour, triangles);
 
     // If removeDegen option is on, then remove degenerate triangles from the result, this is good for graphical applications
     if (!includeDegen)
@@ -451,7 +457,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
             const Vec2& p = contour[triangles[i][0]];
             const Vec2& q = contour[triangles[i][1]];
             const Vec2& r = contour[triangles[i][2]];
-            const double area = Triangulator::triangleSignedArea(p, q, r);
+            const double area = triangleSignedArea(p, q, r);
             if (abs(area) < TRI_EPSILON) continue;
             trianglesReduced.push_back(triangles[i]);
         }
@@ -471,7 +477,7 @@ Triangulator::triangulate1(const std::vector<Triangulator::Vec2>& contour,
 
 std::vector<std::array<std::array<std::size_t,2>,3> >
 Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
-                          Triangulator::Diagnostics& diagnostics,
+                          Diagnostics& diagnostics,
                           const bool& delaunay,
                           const bool& includeDegen)
 {    
@@ -486,8 +492,8 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
         const std::size_t& N = contours[i].size();
         for (std::size_t j = 0; j < N; j++)
         {
-            const Triangulator::Vec2& q = contours[i][j];
-            const Triangulator::Vec2& r = contours[i][(j+1)%N];
+            const Vec2& q = contours[i][j];
+            const Vec2& r = contours[i][(j+1)%N];
             polygonAreas[i] += 0.5 * (q[0] * r[1] - q[1] * r[0]);
         }
     }
@@ -498,7 +504,7 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
     {
         numVerticesInBridgedContour += contours[i].size();
     }
-    std::vector<Triangulator::Vertex> bridgedContour;
+    std::vector<Vertex> bridgedContour;
     bridgedContour.reserve(numVerticesInBridgedContour);
     for (std::size_t i = 0; i < contours.size(); i++)
     {
@@ -578,19 +584,19 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
     {
         double distSqToClosestEdge = std::numeric_limits<double>::max();
         std::array<std::size_t,2> closestEdge;
-        const Triangulator::Vec2& a = bridgedContour[leftmost[m]].pos;
+        const Vec2& a = bridgedContour[leftmost[m]].pos;
         std::size_t vertex = bridgedContour[leftmost[m]].prevX;
         while(vertex != TRI_UNDEFINED_INDEX)
         {
-            const Triangulator::Vec2& b = bridgedContour[vertex].pos;
+            const Vec2& b = bridgedContour[vertex].pos;
             for (std::size_t n = 0; n < 2; n++)    // Two connected edges on each vertex
             {
                 const std::size_t& neighbor = (n == 0 ? bridgedContour[vertex].prevVertex : bridgedContour[vertex].nextVertex);
-                const Triangulator::Vec2& c = bridgedContour[neighbor].pos;
-                if ( !Triangulator::lessThan(b, c) ) continue;    // If c is to the right of b, then skip it to avoid computing twice
-                if ( Triangulator::lessThan(a, c))    // If c is to the right of a, then forget edge bc, just compute distance to vertex b
+                const Vec2& c = bridgedContour[neighbor].pos;
+                if ( !lessThan(b, c) ) continue;    // If c is to the right of b, then skip it to avoid computing twice
+                if ( lessThan(a, c))    // If c is to the right of a, then forget edge bc, just compute distance to vertex b
                 {
-                    const double distSq = Triangulator::distanceSquared(a, b);
+                    const double distSq = distanceSquared(a, b);
                     if (distSq < distSqToClosestEdge)
                     {
                         distSqToClosestEdge = distSq;
@@ -598,9 +604,9 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
                     }
                 }
                 else {
-                    const double signedArea = (n == 0 ? Triangulator::triangleSignedArea(a, c, b) : Triangulator::triangleSignedArea(a, b, c));
+                    const double signedArea = (n == 0 ? triangleSignedArea(a, c, b) : triangleSignedArea(a, b, c));
                     if (signedArea < 0.0) continue;    // The triangle winding should match the polygon winding
-                    const double distSq = Triangulator::pointToEdgeDistanceSquared2D(a, b, c, TRI_EPSILON);
+                    const double distSq = pointToEdgeDistanceSquared2D(a, b, c, TRI_EPSILON);
                     if (distSq < distSqToClosestEdge)
                     {
                         distSqToClosestEdge = distSq;
@@ -615,14 +621,14 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
         std::size_t unobstructedVertex = closestEdge[0];
         if (closestEdge[1] != TRI_UNDEFINED_INDEX)
         {
-            const double dist0 = Triangulator::distanceSquared(a, bridgedContour[closestEdge[0]].pos);
-            const double dist1 = Triangulator::distanceSquared(a, bridgedContour[closestEdge[1]].pos);
+            const double dist0 = distanceSquared(a, bridgedContour[closestEdge[0]].pos);
+            const double dist1 = distanceSquared(a, bridgedContour[closestEdge[1]].pos);
             if (dist1 < dist0) unobstructedVertex = closestEdge[1];
         }
 
         // Insert two bridge vertices and make the proper reconnections
-        Triangulator::Vertex L = bridgedContour[unobstructedVertex];    // Copy vertex on the big loop
-        Triangulator::Vertex R = bridgedContour[leftmost[m]];           // Copy vertex on the hole we are trying to bridge
+        Vertex L = bridgedContour[unobstructedVertex];    // Copy vertex on the big loop
+        Vertex R = bridgedContour[leftmost[m]];           // Copy vertex on the hole we are trying to bridge
         bridgedContour.push_back(R);
         bridgedContour.push_back(L);
         const std::size_t n = bridgedContour.size();
@@ -639,7 +645,7 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
     }
 
     // Convert bridgedContour into a vertex vector and call the triangulate1 routine
-    std::vector<Triangulator::Vec2> singleContour;
+    std::vector<Vec2> singleContour;
     std::vector<std::size_t> singleToBridgedIndex;
     singleContour.reserve(bridgedContour.size());
     singleToBridgedIndex.reserve(bridgedContour.size());
@@ -650,7 +656,7 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
         singleToBridgedIndex.push_back(v);
         v = bridgedContour[v].nextVertex;
     } while (v != start);
-    const std::vector<std::array<std::size_t,3> > triangles1 = this->triangulate1(singleContour, diagnostics, delaunay, includeDegen);
+    const std::vector<std::array<std::size_t,3> > triangles1 = triangulate1(singleContour, diagnostics, delaunay, includeDegen);
 
     // Convert triangle vertices from singleContour index to a original contour/vertex pairs
     triangles.reserve(triangles1.size());
@@ -670,139 +676,10 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
 
 
 
-
-
-
-
-
-void Triangulator::performChewRefinement(const std::vector<Vec2>& contour,
+void performChewRefinement(const std::vector<Vec2>& contour,
                                          std::vector<std::array<std::size_t,3> >& triangles)
 {
     // IMPLEMENT LATER //
-}
-
-
-
-
-int Triangulator::DEBUG__WRITE_IMAGE(const std::vector<Vec2>& contour,
-                                      std::vector<std::array<std::size_t,3> >& triangles,
-                                      const QString& imageFilePath)
-{
-    // Set some image parameters
-    const int IMAGE_WIDTH      = 1000;
-    const int LINE_WIDTH       = 3;
-    const double GROWTH_FACTOR = 1.01;
-
-    // Compute the bounding box for the polygon and triangulation
-    Triangulator::Vec2 lower = contour[0];
-    Triangulator::Vec2 upper = contour[0];
-    for (std::size_t i = 0; i < contour.size(); i++)
-    {
-        lower[0] = std::min(lower[0], contour[i][0]);
-        lower[1] = std::min(lower[1], contour[i][1]);
-        upper[0] = std::max(upper[0], contour[i][0]);
-        upper[1] = std::max(upper[1], contour[i][1]);
-    }
-    const Triangulator::Vec2 center = {0.5 * (lower[0] + upper[0]), 0.5 * (lower[1] + upper[1])};
-    const double paddedWidth = GROWTH_FACTOR * std::max( upper[0] - lower[0], upper[1] - lower[1] );
-    const double scaleFactor = double(IMAGE_WIDTH) / paddedWidth;
-    const double imageHalfWidth = 0.5 * double(IMAGE_WIDTH);
-
-    // Initialize the image and painter
-    QImage image(IMAGE_WIDTH, IMAGE_WIDTH, QImage::Format::Format_RGB32);
-    image.fill(0);
-    QPainter painter;
-    painter.begin(&image);
-    painter.setBrush( QBrush(Qt::lightGray, Qt::BrushStyle::SolidPattern) );
-    painter.setPen( QPen(Qt::white, LINE_WIDTH, Qt::SolidLine) );
-    std::array<QColor,12> palette = {Qt::red, Qt::green, Qt::blue,
-                                     Qt::cyan, Qt::magenta, Qt::yellow,
-                                     Qt::darkRed, Qt::darkGreen, Qt::darkBlue,
-                                     Qt::darkCyan, Qt::darkMagenta, Qt::darkYellow};
-
-    // Draw triangle edges
-    for (std::size_t i = 0; i < triangles.size(); i++)
-    {
-        const QColor color = palette[i % 12];
-        painter.setBrush( QBrush(color, Qt::BrushStyle::SolidPattern) );
-        QPointF points[3];
-        for (std::size_t j = 0; j < 3; j++)
-        {
-            points[j].setX( imageHalfWidth + scaleFactor * (contour[triangles[i][j]][0] - center[0]) );
-            points[j].setY( imageHalfWidth - scaleFactor * (contour[triangles[i][j]][1] - center[1]) );
-        }
-        painter.drawPolygon(points, 3, Qt::WindingFill);
-    }
-
-    // Finalize painter and save image
-    painter.end();
-    int result = image.save(imageFilePath);
-    return result;
-}
-
-
-
-
-int Triangulator::DEBUG__WRITE_IMAGE(const std::vector<std::vector<Triangulator::Vec2> >& contours,
-                                     std::vector<std::array<std::array<std::size_t,2>,3> >& triangles,
-                                     const QString& imageFilePath)
-{
-    std::size_t numVerticesTotal = 0;
-    for (std::size_t i = 0; i < contours.size(); i++)
-    {
-        numVerticesTotal += contours[i].size();
-    }
-
-    std::vector<Triangulator::Vec2> singleContour(numVerticesTotal);
-    std::vector<std::vector<std::size_t> > pairToFlatIndex(contours.size());
-    std::size_t k = 0;
-    for (std::size_t i = 0; i < contours.size(); i++)
-    {
-        pairToFlatIndex[i].resize(contours[i].size());
-        for (std::size_t j = 0; j < contours[i].size(); j++)
-        {
-            singleContour[k] = contours[i][j];
-            pairToFlatIndex[i][j] = k;
-            k++;
-        }
-    }
-
-    std::vector<std::array<std::size_t,3> > trianglesFlat(triangles.size());
-    for (std::size_t i = 0; i < triangles.size(); i++)
-    {
-        for (std::size_t j = 0; j < 3; j++)
-        {
-            trianglesFlat[i][j] = pairToFlatIndex[triangles[i][j][0]][triangles[i][j][1]];
-        }
-    }
-
-    return this->DEBUG__WRITE_IMAGE(singleContour, trianglesFlat, imageFilePath);
-}
-
-
-
-
-std::vector<std::array<std::size_t,2> >
-Triangulator::DEBUG__TEST_DELAUNAY_PROPERTY(const std::vector<Vec2>& contour,
-                                            const std::vector<std::array<std::size_t,3> >& triangles)
-{
-    std::vector<std::array<std::size_t,2> > encroachedList;
-    for (std::size_t i = 0; i < triangles.size(); i++)
-    {
-        const Triangulator::Vec2& p = contour[triangles[i][0]];
-        const Triangulator::Vec2& q = contour[triangles[i][1]];
-        const Triangulator::Vec2& r = contour[triangles[i][2]];
-        Triangulator::Vec2 center;
-        double radSq;
-        Triangulator::triangleCircumcircle(p, q, r, center, radSq);
-        for (std::size_t j = 0; j < contour.size(); j++)
-        {
-            if (j == triangles[i][0] || j == triangles[i][1] || j == triangles[i][2]) continue;
-            const double distSq = distanceSquared(center, contour[j]);
-            if (distSq < radSq) encroachedList.push_back({i, j});
-        }
-    }
-    return encroachedList;
 }
 
 

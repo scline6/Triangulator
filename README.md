@@ -26,7 +26,7 @@ A header-only library for Constrained Delaunay Triangulation
 
 ## Roadmap
 
-1. Get rid of class and use a namespace instead.
+1. Make triangle circumcircle logic work with collinear points (degenerate triangles)
 2. Test on challenging polygons with touching points, self-intersections, duplicate points, collinear points, etc.
 3. Build a Tensorflow deep-learning model to perform CDT by training it against Triangulator.  This is the original reason for the project.
 4. Implement and test Triangulator::performChewRefinement.

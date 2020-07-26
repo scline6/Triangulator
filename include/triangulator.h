@@ -16,89 +16,78 @@
 
 
 
-// FOR DEBUGGING, REMOVE LATER
-#include <iostream>
-#include <QImage>
-#include <QPainter>
-#include <QFile>
-#include <QFileInfo>
 
-
-
-
-const double      TRI_EPSILON                = 1e-12;
-const std::size_t TRI_UNDEFINED_INDEX        = std::numeric_limits<std::size_t>::max();
-const std::size_t TRI_SPATIAL_HASH_CUTOFF    = 25;
-const std::size_t TRI_SPATIAL_HASH_PHASE_OUT = 10;
-
-
-
-
-class Triangulator
+namespace Triangulator
 {
 
-public:    // public API functions
+// Public API
 
-
-    typedef  std::array<double,2>  Vec2;
-
-
-    typedef  std::array<std::array<double,2>,2>  Mat2x2;
-
-
+    // Diagnostic output from triangulation routine, user can check if triangulation is incorrect
     struct Diagnostics
     {
         double polygonArea;
         double totalTriangleArea;
-        double areaDiff;
+        double areaDiff;    // totalTriangleArea - polygonArea, if abs(areaDiff) > EPS, then something is wrong
         int numTriangles;
         int expectedNumTriangles;
-        int triDiff;
-        int numTrianglesWithPointOnBoundary;
-        int numTrianglesWithPointInside;
+        int triDiff;    // numTriangles - expectedNumTriangles, if triDiff != 0, then something is wrong
+        int numTrianglesWithPointOnBoundary;    // Some boundary (a.k.a touching) points is OK
+        int numTrianglesWithPointInside;        // This means the triangles have vertices inside them, which is bad
     };
 
 
+    // Triangulate a single polygon contour
     std::vector<std::array<std::size_t,3> >
-    triangulate1(const std::vector<Vec2>& contour,
+    triangulate1(const std::vector<std::array<double,2> >& contour,
                  Diagnostics& diagnostics,
                  const bool& delaunay = true,
                  const bool& includeDegen = true);
 
 
+    // Triangulate a polygon contour with holes (index=0 is the outer contour, and indices>0 are the hole contours)
+    // Note: the resulting triangle vertices are a contour index / vertex index pair to be consistent with the input
     std::vector<std::array<std::array<std::size_t,2>,3> >
-    triangulate(const std::vector<std::vector<Vec2> >& contours,
+    triangulate(const std::vector<std::vector<std::array<double,2> > >& contours,
                 Diagnostics& diagnostics,
                 const bool& delaunay = true,
                 const bool& includeDegen = true);
 
 
-    void performDelaunayFlips(const std::vector<Vec2>& contour,
+    // Transform the ear-clipped triangles into a Delaunay triangulation
+    // Note: there is no special handling for circumcircle floating point issues, so don't be too picky
+    void performDelaunayFlips(const std::vector<std::array<double,2> >& contour,
                               std::vector<std::array<std::size_t,3> >& triangles);
 
 
-    void performChewRefinement(const std::vector<Vec2>& contour,
+    // NOT IMPLEMENTED YET - would like to add a finite element mesher option
+    void performChewRefinement(const std::vector<std::array<double,2> >& contour,
                                std::vector<std::array<std::size_t,3> >& triangles);
 
 
-    int DEBUG__WRITE_IMAGE(const std::vector<Vec2>& contour,
-                           std::vector<std::array<std::size_t,3> >& triangles,
-                           const QString& imageFilePath);
 
 
-    int DEBUG__WRITE_IMAGE(const std::vector<std::vector<Vec2> >& contours,
-                           std::vector<std::array<std::array<std::size_t,2>,3> >& triangles,
-                           const QString& imageFilePath);
+// Internally used constants, typedefs, structs, enums, and functions
 
 
-    std::vector<std::array<std::size_t,2> >
-    DEBUG__TEST_DELAUNAY_PROPERTY(const std::vector<Vec2>& contour,
-                                  const std::vector<std::array<std::size_t,3> >& triangles);
+    const double      TRI_EPSILON                = 1e-12;
+    const std::size_t TRI_UNDEFINED_INDEX        = std::numeric_limits<std::size_t>::max();
+    const std::size_t TRI_SPATIAL_HASH_CUTOFF    = 25;
+    const std::size_t TRI_SPATIAL_HASH_PHASE_OUT = 10;
 
 
+    typedef  std::array<double,2>  Vec2;
 
 
-protected:
+    static bool lessThan(const Vec2& a, const Vec2& b)
+    {
+        if (a[0] < b[0]) return true;
+        if (a[0] > b[0]) return false;
+        if (a[1] < b[1]) return true;    // Decide tie-break with y-coordinate, which is standard for left-to-right sweeps
+        return false;
+    }
+
+
+    typedef  std::array<std::array<double,2>,2>  Mat2x2;
 
 
     enum IntersectionResult
@@ -126,15 +115,6 @@ protected:
         IntersectionResult reflex;
         bool operator<(const Ear& other) { return this->hash < other.hash; }
     };
-
-
-    static bool lessThan(const Vec2& a, const Vec2& b)
-    {
-        if (a[0] < b[0]) return true;
-        if (a[0] > b[0]) return false;
-        if (a[1] < b[1]) return true;    // Decide tie-break with y-coordinate
-        return false;
-    }
 
 
     // Similar to Ear struct, but used only for bridging holes
@@ -255,11 +235,7 @@ protected:
     };
 
 
-
-
-protected:    // static functions
-
-
+    // Point-to-point squared distance
     static double distanceSquared(const Vec2& a, const Vec2& b)
     {
         const double dx = b[0] - a[0];
@@ -268,26 +244,28 @@ protected:    // static functions
     }
 
 
+    // Point-to-edge squared distance
     static double pointToEdgeDistanceSquared2D(const Vec2& p, const Vec2& a, const Vec2& b, const double& EPS)
     {
         const Vec2 beta = {b[0] - a[0], b[1] - a[1]};
         const double denom = beta[0] * beta[0] + beta[1] * beta[1];
-        if (abs(denom) <= EPS) return distanceSquared(p, a);    // beta=0 means a=b
+        if (std::abs(denom) <= EPS) return distanceSquared(p, a);    // beta=0 means a=b
         const double t = ((p[0] - a[0]) * beta[0] + (p[1] - a[1]) * beta[1]) / denom;
         return distanceSquared(p, {a[0] + beta[0] * t, a[1] + beta[1] * t});
     }
 
 
-    static IntersectionResult pointInTriangleTest2D(const Vec2& a, const Vec2& p, const Vec2& q, const Vec2& r)
+    // Test if a point is inside a triangle
+    static IntersectionResult pointInTriangleTest2D(const Vec2& a, const Vec2& p, const Vec2& q, const Vec2& r, const double& EPS)
     {
         std::array<double,3> test;
         test[0] = (a[0] - r[0]) * (q[1] - r[1]) - (q[0] - r[0]) * (a[1] - r[1]);
         test[1] = (a[0] - p[0]) * (r[1] - p[1]) - (r[0] - p[0]) * (a[1] - p[1]);
         test[2] = (a[0] - q[0]) * (p[1] - q[1]) - (p[0] - q[0]) * (a[1] - q[1]);
         std::array<int,3> intTest;
-        intTest[0] = (test[0] > TRI_EPSILON ? 1 : (test[0] < -TRI_EPSILON ? -1 : 0));
-        intTest[1] = (test[1] > TRI_EPSILON ? 1 : (test[1] < -TRI_EPSILON ? -1 : 0));
-        intTest[2] = (test[2] > TRI_EPSILON ? 1 : (test[2] < -TRI_EPSILON ? -1 : 0));
+        intTest[0] = (test[0] > EPS ? 1 : (test[0] < -EPS ? -1 : 0));
+        intTest[1] = (test[1] > EPS ? 1 : (test[1] < -EPS ? -1 : 0));
+        intTest[2] = (test[2] > EPS ? 1 : (test[2] < -EPS ? -1 : 0));
         int sum  = intTest[0] + intTest[1] + intTest[2];
         int prod = intTest[0] * intTest[1] * intTest[2];
         if (abs(sum) == 3) return IntersectionResult::INTERIOR;
@@ -306,25 +284,27 @@ protected:    // static functions
     }
 
 
+    // Test if an line segement intersects another line segment
     static IntersectionResult edgeEdgeIntersectionTest2D(const Vec2& a, const Vec2& b, const Vec2& p, const Vec2& q, const double& EPS)
     {
         Mat2x2 A = {Vec2{b[0]-a[0], p[0]-q[0]}, Vec2{b[1]-a[1], p[1]-q[1]}};
         Vec2 B = {p[0]-a[0], p[1]-a[1]};
         bool singular;
         Vec2 uv = solve2x2(A, B, singular, EPS);
-        if (abs(uv[0]) <= EPS || abs(uv[1]) <= EPS) return IntersectionResult::BOUNDARY;
+        if (std::abs(uv[0]) <= EPS || std::abs(uv[1]) <= EPS) return IntersectionResult::BOUNDARY;
         if (uv[0] < 0.0 || uv[0] > 1.0 || uv[1] < 0.0 || uv[1] > 1.0) return IntersectionResult::EXTERIOR;
         return IntersectionResult::INTERIOR;
     }
 
 
+    // Test for intersection using point-in-triangle primarily, but if point is on boundary, check if the points two edges cross the ear edge
     static IntersectionResult hybridIntersectionTest(const std::size_t& ear, const std::size_t& vertex, const std::vector<Ear>& polygon, const double& EPS)
     {
         const Vec2& p = polygon[polygon[ear].prevEar].pos;
         const Vec2& q = polygon[ear].pos;
         const Vec2& r = polygon[polygon[ear].nextEar].pos;
         const Vec2& b = polygon[vertex].pos;
-        const IntersectionResult result = pointInTriangleTest2D(b, p, q, r);
+        const IntersectionResult result = pointInTriangleTest2D(b, p, q, r, EPS);
         if (result != IntersectionResult::BOUNDARY) return result;
         const Vec2& a = polygon[polygon[vertex].prevEar].pos;
         const Vec2& c = polygon[polygon[vertex].nextEar].pos;
@@ -344,17 +324,17 @@ protected:    // static functions
 
 
     // Use winding area to determine is a vertex is a reflex vertex or not
-    static IntersectionResult isReflexVertex(const std::size_t& ear, const std::vector<Ear>& polygon)
+    static IntersectionResult isReflexVertex(const std::size_t& ear, const std::vector<Ear>& polygon, const double& EPS)
     {
         int winding = 0;
         const Vec2& a = polygon[ear].pos;
         const Vec2& q = polygon[polygon[ear].prevEar].pos;
         const Vec2& r = polygon[polygon[ear].nextEar].pos;
         double inwardness = (r[0] - q[0]) * (a[1] - q[1]) - (r[1] - q[1]) * (a[0] - q[0]);
-        if (abs(inwardness) < TRI_EPSILON)
+        if (std::abs(inwardness) < EPS)
         {
-            const double u = abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
-            if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return IntersectionResult::BOUNDARY;
+            const double u = std::abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
+            if (-EPS < u && u < 1.0 + EPS) return IntersectionResult::BOUNDARY;
         }
         if (q[1] <= a[1] && a[1] < r[1] && inwardness > 0.0) winding++;
         if (r[1] <= a[1] && a[1] < q[1] && inwardness < 0.0) winding--;
@@ -364,10 +344,10 @@ protected:    // static functions
             const Vec2& q = polygon[vertex].pos;
             const Vec2& r = polygon[polygon[vertex].nextEar].pos;
             double inwardness = (r[0] - q[0]) * (a[1] - q[1]) - (r[1] - q[1]) * (a[0] - q[0]);
-            if (abs(inwardness) < TRI_EPSILON)
+            if (abs(inwardness) < EPS)
             {
-                const double u = abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
-                if (-TRI_EPSILON < u && u < 1.0 + TRI_EPSILON) return IntersectionResult::BOUNDARY;
+                const double u = std::abs(r[0] - q[0]) > std::abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
+                if (-EPS < u && u < 1.0 + EPS) return IntersectionResult::BOUNDARY;
                 if (q[1] <= a[1] && a[1] < r[1] && inwardness > 0.0) winding++;
                 if (r[1] <= a[1] && a[1] < q[1] && inwardness < 0.0) winding--;
             }
@@ -378,19 +358,20 @@ protected:    // static functions
 
 
     // Test for reflex vertex using area primarily, but if abs(area)<EPS, then use winding order test
-    static IntersectionResult isReflexVertexFast(const std::size_t& ear, const std::vector<Ear>& polygon, double& signedArea)
+    static IntersectionResult isReflexVertexHybrid(const std::size_t& ear, const std::vector<Ear>& polygon, double& signedArea, const double& EPS)
     {
         const Vec2& p = polygon[polygon[ear].prevEar].pos;
         const Vec2& q = polygon[ear].pos;
         const Vec2& r = polygon[polygon[ear].nextEar].pos;
         signedArea = triangleSignedArea(p, q, r);
-        if (abs(signedArea) <= TRI_EPSILON) return isReflexVertex(ear, polygon);
+        if (std::abs(signedArea) <= EPS) return isReflexVertex(ear, polygon, EPS);
         if (signedArea > 0.0) return IntersectionResult::EXTERIOR;
         return IntersectionResult::INTERIOR;
     }
 
 
-    static double triangleRadiusRatio(const Vec2& p, const Vec2& q, const Vec2& r)
+    // Triangle in-radius/circum-radius is a good triangle quality measure, bigger is better
+    static double triangleRadiusRatio(const Vec2& p, const Vec2& q, const Vec2& r, const double& EPS)
     {
         const double area = std::abs(triangleSignedArea(p, q, r));
         const Vec2 pq = {q[0]-p[0], q[1]-p[1]};
@@ -400,22 +381,27 @@ protected:    // static functions
         const double lenQR = sqrt(qr[0] * qr[0] + qr[1] * qr[1]);
         const double lenRP = sqrt(rp[0] * rp[0] + rp[1] * rp[1]);
         const double prod = lenPQ * lenQR * lenRP;
-        return (prod < TRI_EPSILON ? 0.0 : 2.0 * area * area * (lenPQ + lenQR + lenRP) / (prod * prod * prod));
+        return (prod < EPS ? 0.0 : 2.0 * area * area * (lenPQ + lenQR + lenRP) / (prod * prod * prod));
     }
 
 
-    static void triangleCircumcircle(const Vec2& p, const Vec2& q, const Vec2& r, Vec2& center, double& radSq)
+    // Circumcenter and circumradius of triangle, used for Delaunay tests
+    // NEED TO ADD SPECIAL HANDLING FOR COLLINEAR POINTS
+    static Circumcircle triangleCircumcircle(const Vec2& p, const Vec2& q, const Vec2& r)
     {
         const std::array<double,3> e = {distanceSquared(q, r), distanceSquared(r, p), distanceSquared(p, q)};
         std::array<double,3> w = {e[0] * (e[1] + e[2] - e[0]), e[1] * (e[2] + e[0] - e[1]), e[2] * (e[0] + e[1] - e[2])};
         const double denom = w[0] + w[1] + w[2];
         w[0] /= denom; w[1] /= denom; w[2] /= denom;
-        center = {w[0] * p[0] +  w[1] * q[0] + w[2] * r[0], w[0] * p[1] +  w[1] * q[1] + w[2] * r[1]};
-        radSq = distanceSquared(center, p);
+        Circumcircle cc;
+        cc.center = {w[0] * p[0] +  w[1] * q[0] + w[2] * r[0], w[0] * p[1] +  w[1] * q[1] + w[2] * r[1]};
+        cc.radSq = distanceSquared(cc.center, p);
+        return cc;
     }
 
 
-    static void hilbertRotate(const std::int32_t& n, const std::int32_t& rx, const std::int32_t& ry, std::int32_t& x, std::int32_t& y) {
+    // Hilbert hasher rotate function
+    inline void hilbertRotate(const std::int32_t& n, const std::int32_t& rx, const std::int32_t& ry, std::int32_t& x, std::int32_t& y) {
         if (ry != 0) return;
         if (rx == 1)
         {
@@ -428,7 +414,8 @@ protected:    // static functions
     }
 
 
-    static std::int32_t hilbertHashInt(const std::int32_t& n, std::int32_t& x, std::int32_t& y) {
+    // Standard 2D Hilbert has from wikipedia - need to change to shift operations to improve speed
+    inline std::int32_t hilbertHashInt(const std::int32_t& n, std::int32_t& x, std::int32_t& y) {
         std::int32_t d = 0;
         for (std::int32_t s = n/2; s > 0; s /= 2)
         {
@@ -441,7 +428,8 @@ protected:    // static functions
     }
 
 
-    static int hilbertHashReal(const Vec2& p, const Vec2& lower, const double& inverseTotalWidth)
+    // Bin the x,y real coordinate pair into an integer pair before hashing
+    inline int hilbertHashReal(const Vec2& p, const Vec2& lower, const double& inverseTotalWidth)
     {
         const double inverseCellWidth = 32767.0 * inverseTotalWidth;
         std::int32_t xInt = static_cast<int32_t>(inverseCellWidth * (p[0] - lower[0]));
@@ -449,7 +437,7 @@ protected:    // static functions
         return hilbertHashInt(32768, xInt, yInt);   //32768 = 2^15, could go up to 2^30 or 2^31, but that is just extra looping
     }
 
-};
+}
 
 
 
