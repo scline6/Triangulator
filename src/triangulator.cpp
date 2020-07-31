@@ -66,7 +66,8 @@ void Triangulator::performDelaunayFlips(const std::vector<Vec2>& contour,
         nbLookup[i] = nbEdges.size();
         for (std::size_t j = 0; j < allEdges[i].size(); j++)
         {
-            if (allEdges[i][j].count != 2) continue;    // Skip boundary edges
+            if ( allEdges[i][j].count != 2 ) continue;    // Skip boundary edges
+            //if ( guardedEdges.count(allEdges[i][j].vertex) > 0 ) continue;    // Skip guarded edges - needed if the contour has duplicate edges
             nbEdges.push_back(allEdges[i][j]);
         }
     }
@@ -514,6 +515,7 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
             vertex.pos = contours[i][j];
             vertex.contourIndex = i;
             vertex.vertexIndex = j;
+            vertex.duplicateOf = TRI_UNDEFINED_INDEX;
             bridgedContour.push_back(vertex);
         }
     }
@@ -632,6 +634,8 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
         bridgedContour.push_back(R);
         bridgedContour.push_back(L);
         const std::size_t n = bridgedContour.size();
+        bridgedContour[n-2].duplicateOf = leftmost[m];
+        bridgedContour[n-1].duplicateOf = unobstructedVertex;
         bridgedContour[n-2].prevX = leftmost[m];
         bridgedContour[leftmost[m]].nextX = n-2;
         bridgedContour[n-1].prevX = unobstructedVertex;
@@ -649,14 +653,31 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
     std::vector<std::size_t> singleToBridgedIndex;
     singleContour.reserve(bridgedContour.size());
     singleToBridgedIndex.reserve(bridgedContour.size());
+    std::vector<std::size_t> bridgedToSingleIndex(bridgedContour.size());
     const std::size_t start = 0;
     std::size_t v = start;
     do {
         singleContour.push_back(bridgedContour[v].pos);
         singleToBridgedIndex.push_back(v);
+        bridgedToSingleIndex[v] = singleContour.size() - 1;
         v = bridgedContour[v].nextVertex;
     } while (v != start);
-    const std::vector<std::array<std::size_t,3> > triangles1 = triangulate1(singleContour, diagnostics, delaunay, includeDegen);
+    std::vector<std::array<std::size_t,3> > triangles1 = triangulate1(singleContour, diagnostics, false, includeDegen);
+
+    // Map the duplicate vertices back original to unlock the bridge edge, then perform delaunay flips
+    if (delaunay)
+    {
+        for (std::size_t i = 0; i < triangles1.size(); i++)
+        {
+            for (std::size_t j = 0; j < 3; j++)
+            {
+                const std::size_t& k = singleToBridgedIndex[triangles1[i][j]];
+                const std::size_t& d = bridgedContour[k].duplicateOf;
+                if (d != TRI_UNDEFINED_INDEX) triangles1[i][j] = bridgedToSingleIndex[d];
+            }
+        }
+        performDelaunayFlips(singleContour, triangles1);
+    }
 
     // Convert triangle vertices from singleContour index to a original contour/vertex pairs
     triangles.reserve(triangles1.size());
@@ -676,10 +697,113 @@ Triangulator::triangulate(const std::vector<std::vector<Vec2> >& contours,
 
 
 
-void performChewRefinement(const std::vector<Vec2>& contour,
-                                         std::vector<std::array<std::size_t,3> >& triangles)
+void performChewRefinement(std::vector<Vec2>& vertices,
+                           std::vector<std::array<std::size_t,3> >& triangles)
 {
-    // IMPLEMENT LATER //
+/*
+    std::vector<std::array<std::size_t,3> > neighbors(triangles.size());
+
+    auto insertPoint = [vertices, triangles, neighbors](const Vec2& point, const std::size_t& triIndex)
+    {
+        // Add new vertex
+        const std::size_t newVertexIndex = vertices.size();
+        vertices.push_back(point);
+
+        // Sweep outward and find all triangles that are encroached by the new midpoint
+        std::vector<std::size_t> encroachedTriangles;
+        std::vector<std::array<std::size_t,2> > holeOutlineEdges;
+        std::deque<std::array<std::size_t,3> > triangleQueue;
+        std::unordered_set<std::size_t> alreadyTested;
+        encroachedTriangles.reserve(20);    // Guess a little high to avoid re-allocating
+        encroachedTriangles.push_back(triIndex);
+        alreadyTested.insert(triIndex);
+        for (std::size_t i = 0; i < 3; i++)
+        {
+            const std::size_t& n = neighbors[triIndex][i];
+            if (n == TRI_UNDEFINED_INDEX) continue;
+            triangleQueue.push_back( {n, triIndex, i} );
+        }
+        while (triangleQueue.size() > 0)
+        {
+            const std::size_t t = triangleQueue.front()[0];
+            const std::size_t parentTriangle = triangleQueue.front()[1];
+            const std::size_t parentEdge = triangleQueue.front()[2];
+            triangleQueue.pop_front();
+            alreadyTested.insert(t);
+            const Vec2& p = vertices[triangles[t][0]];
+            const Vec2& q = vertices[triangles[t][1]];
+            const Vec2& r = vertices[triangles[t][2]];
+            Circumcircle cc = triangleCircumcircle(p, q, r);
+            if (distanceSquared(cc.center, midpoint) > cc.radSq - TRI_EPSILON)
+            {
+                const std::size_t& v1 = triangles[parentTriangle][(parentEdge+1)%3];
+                const std::size_t& v2 = triangles[parentTriangle][(parentEdge+2)%3];
+                holeOutlineEdges.push_back({v1, v2});
+                continue;    // Triangle is not encroached, so move on
+            }
+            encroachedTriangles.push_back(t);
+            for (std::size_t i = 0; i < 3; i++)
+            {
+                const std::size_t& n = neighbors[t][i];
+                if (n == TRI_UNDEFINED_INDEX) continue;
+                if (alreadyTested.count(n) == 0) triangleQueue.push_back(n);
+            }
+        }
+
+        // Replace encroached triangles with a new Delaunay triangulation
+        const std::size_t BOWYER_WATSON = 0;    // A simple triangle fan
+        const std::size_t LAWSON        = 1;    // Perform a sweep of flips
+        const std::size_t holeTriangulationMethod = BOWYER_WATSON;
+        if (holeTriangulationMethod == BOWYER_WATSON)
+        {
+            const std::size_t n = holeOutlineEdges.size() - encroachedTriangles.size();
+            for (std::size_t i = 0; i < n; i++)
+            {
+                encroachedTriangles.push_back(triangles.size() + i);
+            }
+            triangles.resize(triangles.size() + n);
+            for (std::size_t i = 0; i < holeOutlineEdges.size(); i++)
+            {
+                triangles[encroachedTriangles[i]] = {holeOutlineEdges[i][0], holeOutlineEdges[i][1], newVertexIndex};
+            }
+        }
+    };
+
+
+    auto splitEdge = [vertices, triangles, neighbors, insertPoint](const std::size_t& triIndex, const std::size_t& edgeIndex)
+    {
+        // Compute midpoint of split-edge and add the new vertex
+        const std::size_t& v1 = triangles[triIndex][(edgeIndex+1)%3];
+        const std::size_t& v2 = triangles[triIndex][(edgeIndex+2)%3];
+        const Vec2 midpoint = 0.5 * (vertices[v1] + vertices[v2]);
+        insertPoint(point, triIndex);
+    };
+
+    auto splitTriangle = [vertices, triangles, neighbors, insertPoint](const std::size_t& triIndex, const bool& offCenter)
+    {
+        const double BETASQ = 2.0;
+        const std::array<std::size_t,3>& tri = triangles[triIndex];
+        const Circumcircle cc1 = triangleCircumcircle(vertices[tri[0]], vertices[tri[1]], vertices[tri[2]]);
+        std::array<double,3> edgeLenSq = {distanceSquared(vertices[tri[1]], vertices[tri[2]]),
+                                          distanceSquared(vertices[tri[2]], vertices[tri[0]]),
+                                          distanceSquared(vertices[tri[0]], vertices[tri[1]])};
+        const std::size_t e = std::distance(edgeLenSq.begin(), std::min_element(edgeLenSq.begin(), edgeLenSq.end()));
+        const Circumcircle cc2 = triangleCircumcircle(cc.center, vertices[tri[(e+1)%3]], vertices[tri[(e+2)%3]]);
+        Vec2 center;
+        if (!offCenter || cc2.radSq <= BETASQ * edgeLenSq[e])
+        {
+            center = cc1.center;
+        }
+        else {
+            const Vec2 disp = {cc1.center[0] - cc2.center[0], cc1.center[1] - cc2.center[0]};
+            const double distSq = disp[0] * disp[0] + disp[1] * disp[1];
+            const double t = sqrt(cc2.radSq / distSq);
+            center = {cc2.center[0] + disp[0] * t, cc2.center[1] + disp[1] * t};
+        }
+        insertPoint(center, triIndex);
+    };
+
+*/
 }
 
 

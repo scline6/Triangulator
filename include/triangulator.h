@@ -60,7 +60,7 @@ namespace Triangulator
 
 
     // NOT IMPLEMENTED YET - would like to add a finite element mesher option
-    void performChewRefinement(const std::vector<std::array<double,2> >& contour,
+    void performChewRefinement(std::vector<std::array<double,2> >& contour,
                                std::vector<std::array<std::size_t,3> >& triangles);
 
 
@@ -127,6 +127,7 @@ namespace Triangulator
         std::size_t nextVertex;
         std::size_t prevX;
         std::size_t nextX;
+        std::size_t duplicateOf;
         bool operator<(const Vertex& other) { return lessThan(this->pos, other.pos); }
     };
 
@@ -149,7 +150,7 @@ namespace Triangulator
         double signedArea;
         IntersectionResult reflex;
         double triQuality;
-        Priority(const IntersectionResult& pit, const double& sa, const IntersectionResult& r, const double& tq) : intersection(pit), signedArea(sa), reflex(r), triQuality(tq) {}
+        Priority(const IntersectionResult& ir, const double& sa, const IntersectionResult& r, const double& tq) : intersection(ir), signedArea(sa), reflex(r), triQuality(tq) {}
         bool operator<(const Priority& other) const
         {
             int thisAreaScore  = (std::abs(this->signedArea) <= TRI_EPSILON ? 2 : (this->signedArea > 0.0 ? 0 : 4));    //0 positive, 2 degen, 4 negative
@@ -333,7 +334,7 @@ namespace Triangulator
         double inwardness = (r[0] - q[0]) * (a[1] - q[1]) - (r[1] - q[1]) * (a[0] - q[0]);
         if (std::abs(inwardness) < EPS)
         {
-            const double u = std::abs(r[0] - q[0]) > abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
+            const double u = std::abs(r[0] - q[0]) > std::abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
             if (-EPS < u && u < 1.0 + EPS) return IntersectionResult::BOUNDARY;
         }
         if (q[1] <= a[1] && a[1] < r[1] && inwardness > 0.0) winding++;
