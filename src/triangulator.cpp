@@ -324,6 +324,7 @@ Triangulator::triangulate1(const std::vector<Vec2>& contour,
     diagnostics.totalTriangleArea = 0.0;
     diagnostics.numTrianglesWithPointOnBoundary = 0;
     diagnostics.numTrianglesWithPointInside = 0;
+
     while (triangles.size() < N - 2 && earQueue.size() > 0)
     {
         // Pick the ear with best quality from the queue
@@ -360,9 +361,10 @@ Triangulator::triangulate1(const std::vector<Vec2>& contour,
                 hashLower = std::numeric_limits<std::int32_t>::min();
                 hashUpper = std::numeric_limits<std::int32_t>::max();
             }
-            int vertex = polygon[ear].nextHash;
+
+            std::size_t vertex = polygon[ear].nextHash;
             int sweepDirection = 1;
-            while (true)
+            while (vertex != TRI_UNDEFINED_INDEX)
             {
                 // Test if vertex  is in interior, on boundary, or in exterior of the ear
                 if (vertex != prevEar && vertex != nextEar)
@@ -459,14 +461,14 @@ Triangulator::triangulate1(const std::vector<Vec2>& contour,
             const Vec2& q = contour[triangles[i][1]];
             const Vec2& r = contour[triangles[i][2]];
             const double area = triangleSignedArea(p, q, r);
-            if (abs(area) < TRI_EPSILON) continue;
+            if (std::abs(area) < TRI_EPSILON) continue;
             trianglesReduced.push_back(triangles[i]);
         }
         triangles = std::move(trianglesReduced);
     }
 
     // Return resulting triangulation
-    diagnostics.areaDiff = diagnostics.totalTriangleArea - abs(diagnostics.polygonArea);
+    diagnostics.areaDiff = diagnostics.totalTriangleArea - std::abs(diagnostics.polygonArea);
     diagnostics.numTriangles = int(triangles.size());
     diagnostics.expectedNumTriangles = int(N) - 2;
     diagnostics.triDiff = diagnostics.numTriangles - diagnostics.expectedNumTriangles;

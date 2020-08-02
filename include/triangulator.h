@@ -14,7 +14,7 @@
 #include <algorithm>
 #include <limits>
 
-
+#include <iostream>
 
 
 namespace Triangulator
@@ -279,8 +279,8 @@ namespace Triangulator
     static Vec2 solve2x2(const Mat2x2& A, const Vec2& B, bool& singular, const double& EPS)
     {
         const double det = A[0][0] * A[1][1] - A[0][1] * A[1][0];
-        singular = (det < EPS);
-        if (singular) return Vec2();
+        singular = (std::abs(det) < EPS);
+        if (singular) return Vec2{0.0, 0.0};
         return {(A[1][1] * B[0] - A[0][1] * B[1]) / det, (A[0][0] * B[1] - A[1][0] * B[0]) / det};
     }
 
@@ -292,7 +292,8 @@ namespace Triangulator
         Vec2 B = {p[0]-a[0], p[1]-a[1]};
         bool singular;
         Vec2 uv = solve2x2(A, B, singular, EPS);
-        if (std::abs(uv[0]) <= EPS || std::abs(uv[1]) <= EPS) return IntersectionResult::BOUNDARY;
+        //std::cerr << a[0] <<"  "<< a[1] <<" | "<< b[0] <<"  "<< b[1] <<" | "<< p[0] <<"  "<< p[1] <<" | "<< q[0] <<"  "<< q[1] <<" | "<< uv[0] <<"  "<< uv[1] <<"\n";
+        if (std::abs(uv[0]) <= EPS || std::abs(uv[1]) <= EPS || std::abs(uv[0]-1.0) <= EPS || std::abs(uv[1]-1.0) <= EPS) return IntersectionResult::BOUNDARY;
         if (uv[0] < 0.0 || uv[0] > 1.0 || uv[1] < 0.0 || uv[1] > 1.0) return IntersectionResult::EXTERIOR;
         return IntersectionResult::INTERIOR;
     }
@@ -345,7 +346,7 @@ namespace Triangulator
             const Vec2& q = polygon[vertex].pos;
             const Vec2& r = polygon[polygon[vertex].nextEar].pos;
             double inwardness = (r[0] - q[0]) * (a[1] - q[1]) - (r[1] - q[1]) * (a[0] - q[0]);
-            if (abs(inwardness) < EPS)
+            if (std::abs(inwardness) < EPS)
             {
                 const double u = std::abs(r[0] - q[0]) > std::abs(r[1] - q[1]) ? (a[0] - q[0]) / (r[0] - q[0]) : (a[1] - q[1]) / (r[1] - q[1]);
                 if (-EPS < u && u < 1.0 + EPS) return IntersectionResult::BOUNDARY;
