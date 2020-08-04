@@ -10,10 +10,11 @@ using namespace TriangulatorTest;
 
 
 int TriangulatorTest::exportContourToImage(const std::vector<Vec2>& contour,
-                                           const QString& imageFilePath)
+                                           const QString& imageFilePath,
+                                           const int& imageWidth)
 {
     // Set some image parameters
-    const int IMAGE_WIDTH      = 1000;
+    const int IMAGE_WIDTH      = imageWidth;
     const int LINE_WIDTH       = 3;
     const double GROWTH_FACTOR = 1.01;
 
@@ -57,7 +58,7 @@ int TriangulatorTest::exportContourToImage(const std::vector<Vec2>& contour,
         points[1].setX( imageHalfWidth + scaleFactor * (contour[j][0] - center[0]) );
         points[1].setY( imageHalfWidth - scaleFactor * (contour[j][1] - center[1]) );
         painter.drawLine(points[0], points[1]);
-        painter.drawEllipse(points[0], 9, 9);
+        painter.drawEllipse(points[0], 5, 5);
         //painter.drawText(points[0], QString::number(i));
     }
 
@@ -72,10 +73,11 @@ int TriangulatorTest::exportContourToImage(const std::vector<Vec2>& contour,
 
 int TriangulatorTest::exportTriangulationToImage(const std::vector<Vec2>& contour,
                                                  std::vector<std::array<std::size_t,3> >& triangles,
-                                                 const QString& imageFilePath)
+                                                 const QString& imageFilePath,
+                                                 const int& imageWidth)
 {
     // Set some image parameters
-    const int IMAGE_WIDTH      = 1000;
+    const int IMAGE_WIDTH      = imageWidth;
     const int LINE_WIDTH       = 3;
     const double GROWTH_FACTOR = 1.01;
 
@@ -131,7 +133,8 @@ int TriangulatorTest::exportTriangulationToImage(const std::vector<Vec2>& contou
 
 int TriangulatorTest::exportTriangulationToImage(const std::vector<std::vector<Vec2> >& contours,
                                                  std::vector<std::array<std::array<std::size_t,2>,3> >& triangles,
-                                                 const QString& imageFilePath)
+                                                 const QString& imageFilePath,
+                                                 const int& imageWidth)
 {
     std::size_t numVerticesTotal = 0;
     for (std::size_t i = 0; i < contours.size(); i++)
@@ -162,7 +165,7 @@ int TriangulatorTest::exportTriangulationToImage(const std::vector<std::vector<V
         }
     }
 
-    return exportTriangulationToImage(singleContour, trianglesFlat, imageFilePath);
+    return exportTriangulationToImage(singleContour, trianglesFlat, imageFilePath, imageWidth);
 }
 
 
@@ -251,6 +254,173 @@ TriangulatorTest::createRandomPolygon(const int& seed, bool& success)
         }
     }
     return std::move(contour);
+}
+
+
+
+
+std::vector<Vec2>
+TriangulatorTest::createRandomPolygon2(const int& startingSeed, int& nextSeed, const std::size_t& fixedSize, const int& timeout)
+{
+    nextSeed = startingSeed;
+    bool success = false;
+    while (!success && nextSeed - startingSeed < timeout)
+    {
+        std::vector<Vec2> contour = createRandomPolygon(nextSeed, success);
+        if (8 <= fixedSize && fixedSize <=16 && contour.size() != fixedSize) success = false;
+        nextSeed++;
+        if (success) return contour;
+    }
+    return std::vector<Vec2>();
+}
+
+
+
+
+int TriangulatorTest::generateDeepLearningDataset1(const QString& pathName,
+                                                   const QString& imageFolderName,
+                                                   const QString& csvFileName,
+                                                   const std::size_t& numTriangulations,
+                                                   const int& startingSeed,
+                                                   int& nextSeed,
+                                                   const std::size_t& fixedSize)
+{
+    // Name and open output files
+    QFile csvFile( QDir::cleanPath(pathName + QDir::separator() + csvFileName) );
+    if (csvFile.open(QIODevice::WriteOnly))
+    {
+        std::cerr << "CSV Output File opened successfully\n";
+    }
+    else {
+        std::cerr << "CSV Output File could not be opened in WriteOnly mode\n";
+        std::cerr << csvFile.errorString().toStdString() <<"\n";
+        return -1;
+    }
+    QDir imageDir( QDir::cleanPath(pathName + QDir::separator() + imageFolderName) );
+    if (!imageDir.exists()) QDir().mkpath(imageDir.absolutePath());
+
+    // Randomly generate contours and triangulate them
+    nextSeed = startingSeed;
+    std::size_t t = 0;
+    while (t < numTriangulations)
+    {
+        // Create random polygon and then triangulate it
+        std::vector<Vec2> contour = createRandomPolygon2(nextSeed, nextSeed, fixedSize);
+        Diagnostics diagnostics;
+        std::vector<std::array<std::size_t,3> > triangles = triangulate1(contour, diagnostics, true, true);
+        if (std::abs(diagnostics.areaDiff) > TRI_EPSILON || diagnostics.triDiff != 0) continue;
+
+        // Scale the contour to the [0,1]x[0,1] interval and pad with (-1,-1)
+        Vec2 lower = contour[0];
+        Vec2 upper = contour[0];
+        for (std::size_t i = 1; i < contour.size(); i++)
+        {
+            lower[0] = std::min(lower[0], contour[i][0]);
+            lower[1] = std::min(lower[1], contour[i][1]);
+            upper[0] = std::max(upper[0], contour[i][0]);
+            upper[1] = std::max(upper[1], contour[i][1]);
+        }
+        const double width = std::max(upper[0] - lower[0], upper[1] - lower[1]);    // Has to use the same x and y scale to retain Delaunay property
+        for (std::size_t i = 0; i < contour.size(); i++)
+        {
+            contour[i][0] = (contour[i][0] - lower[0]) / width;
+            contour[i][1] = (contour[i][1] - lower[1]) / width;
+        }
+        const std::size_t N = (8 <= fixedSize && fixedSize <= 16 ? fixedSize : 16);    //Bigger number, often 16
+        const std::size_t M = contour.size();    // Smaller number, between 8 and 16 - Need to save this value before contour.size changes
+        for (std::size_t i = contour.size(); i < N; i++)
+        {
+            contour.push_back({-1.0, -1.0});    // If the contour is shorter than 16, then pad with (-1,-1)
+        }
+
+        // Find the third vertex that makes the triangle with contour[i] and contour[(i+1)%N]
+        std::vector<Vec2> thirdVertex(M);
+        for (std::size_t i = 0; i < M; i++)
+        {
+            for (std::size_t j = 0; j < triangles.size(); j++)
+            {
+                std::size_t match = 0;
+                std::size_t other = TRI_UNDEFINED_INDEX;
+                for (std::size_t k = 0; k < 3; k++)
+                {
+                    if (triangles[j][k] == i || triangles[j][k] == (i+1)%M)
+                    {
+                        match++;
+                    }
+                    else {
+                        other = triangles[j][k];
+                    }
+                }
+                if (match == 2)
+                {
+                    thirdVertex[i] = contour[other];
+                    break;
+                }
+            }
+        }
+        for (std::size_t i = thirdVertex.size(); i < N; i++)
+        {
+            thirdVertex.push_back({-1.0, -1.0});    // If the thirdVertex vector is shorter than 16, then pad with (-1,-1)
+        }
+
+        // Write the contour and thirdVertex to the csv file
+        QTextStream csvStream(&csvFile);
+        for (std::size_t i = 0; i < contour.size(); i++)
+        {
+            csvStream << contour[i][0] <<","<< contour[i][1] <<",";
+        }
+        for (std::size_t i = 0; i < thirdVertex.size(); i++)
+        {
+            csvStream << thirdVertex[i][0] <<","<< thirdVertex[i][1] <<",";
+        }
+        csvStream << "\n";
+
+        if (false)
+        {
+            // Export triangulation to image to help with debugging the deep learning model
+            QString imageFilePath = QDir::cleanPath(pathName + QDir::separator() +
+                                                    imageFolderName + QDir::separator() +
+                                                    "Triangulation" + QString::number(t) + ".png");
+            int result = exportTriangulationToImage(contour, triangles, imageFilePath, 256);
+            if (result < 0)
+            {
+                csvFile.close();
+                return result;
+            }
+        }
+
+        t++;    // Increment triangulation counter
+    }
+
+    csvFile.close();
+    return 0;
+}
+
+
+
+
+int TriangulatorTest::generateDeepLearningDataset(const QString& baseDir,
+                                                  const std::size_t& nTrain,
+                                                  const std::size_t& nTest,
+                                                  const std::size_t& nVal)
+{
+    int seed = 1;
+    int result1 = TriangulatorTest::generateDeepLearningDataset1(QDir::cleanPath(baseDir + QDir::separator() + "Training/"),
+                                                                 "Images/", "Triangulations.csv",
+                                                                 nTrain, seed, seed, 8);
+    if (result1 < 0) return result1;
+
+    int result2 = TriangulatorTest::generateDeepLearningDataset1(QDir::cleanPath(baseDir + QDir::separator() + "Test/"),
+                                                                 "Images/", "Triangulations.csv",
+                                                                 nTest, seed, seed, 8);
+    if (result2 < 0) return result2;
+
+    int result3 = TriangulatorTest::generateDeepLearningDataset1(QDir::cleanPath(baseDir + QDir::separator() + "Validation/"),
+                                                                 "Images/", "Triangulations.csv",
+                                                                 nVal, seed, seed, 8);
+    if (result3 < 0) return result3;
+
+    return 0;
 }
 
 
