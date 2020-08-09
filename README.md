@@ -8,7 +8,8 @@ A C++ header-only library for Constrained Delaunay Triangulation
 2. Triangulate a contour with holes by bridging the holes into a single contour.
 3. Provide an option to retain or discard degenerate triangles.  Geometry devs will retain and graphics devs will discard.
 3. Provide an option for Constrained Delaunay Triangulation (CDT) via Delaunay flips.
-4. Provide an option to refine the triangle mesh using Chew's 2nd Algorithm for finite element devs.
+4. STRETCH GOAL: Provide an option to refine the triangle mesh using the Ruppert/Chew/Shewchuk/Ungor algorithm.  
+5. STRETCH GOAL: Provide a mesh smoothing/improvement routine.  The meshing options will be for finite element devs.
 
 
 ## Distiguishing Characteristics
@@ -27,12 +28,9 @@ A C++ header-only library for Constrained Delaunay Triangulation
 ## Roadmap
 
 1. Make triangle circumcircle logic work with collinear points (degenerate triangles)
-2. Test on challenging polygons with touching points, self-intersections, duplicate points, collinear points, etc.
-3. Build a Tensorflow deep-learning model to perform CDT by training it against Triangulator.  This is the original reason for the project.
-4. Implement and test mesh refinement (Ruppert-Chew-Shewchuk-Ungor hybrid method, similar to Triangle software)
-5. Implement and test mesh improvement (smoothing, topological manipulation, etc.)
-6. Make circumcircle work with coplanar points
-7. Add robust predicates
-8. Try diametral ball for edge instead of triangle circumcenter, will that work?
-
-
+2. Add robust geometric predicates.
+3. Try diametral ball for edge instead of triangle circumcenter.  Will that work?
+4. Test on challenging polygons with touching points, self-intersections, duplicate points, collinear points, etc.
+5. Build a Tensorflow deep-learning model to perform CDT by training it against Triangulator.  This is the original reason for the project.
+6. STRETCH GOAL: Implement and test mesh refinement (Ruppert-Chew-Shewchuk-Ungor hybrid method, similar to Triangle software)
+7. STRETCH GOAL: Implement and test mesh improvement (smoothing, topological manipulation, etc.)
