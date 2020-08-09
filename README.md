@@ -1,5 +1,5 @@
 # Triangulator
-A header-only library for Constrained Delaunay Triangulation
+A C++ header-only library for Constrained Delaunay Triangulation
 
 
 ## Features
